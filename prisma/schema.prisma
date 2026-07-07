@@ -1,0 +1,85 @@
+// Marq AI Aggregator Platform - Prisma Schema
+// Unified gateway for OpenAI, Gemini, Claude with intelligent failover
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Provider {
+  id          String   @id @default(cuid())
+  name        String   @unique // openai | gemini | claude | custom
+  displayName String
+  description String?
+  apiEndpoint String?
+  apiKey      String? // stored; in production would be encrypted
+  models      String   // JSON array of supported model ids
+  active      Boolean  @default(true)
+  priority    Int      @default(0) // lower = higher priority for failover
+  color       String   @default("#64748b")
+  icon        String   @default("bot")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages    Message[]
+  healthLogs  HealthLog[]
+  failoversFrom FailoverLog[] @relation("FailoverFrom")
+  failoversTo   FailoverLog[] @relation("FailoverTo")
+}
+
+model HealthLog {
+  id          String   @id @default(cuid())
+  providerId  String
+  provider    Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  status      String   // healthy | degraded | down | unknown
+  latencyMs   Int?
+  error       String?
+  checkedAt   DateTime @default(now())
+
+  @@index([providerId, checkedAt])
+}
+
+model ChatSession {
+  id          String   @id @default(cuid())
+  title       String   @default("New Conversation")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages    Message[]
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role        String   // user | assistant | system
+  content     String
+  providerId  String?
+  provider    Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  model       String?
+  latencyMs   Int?
+  tokensUsed  Int?
+  failedOver  Boolean  @default(false)
+  originalProviderId String?
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model FailoverLog {
+  id                  String   @id @default(cuid())
+  fromProviderId      String
+  fromProvider        Provider @relation("FailoverFrom", fields: [fromProviderId], references: [id], onDelete: Cascade)
+  toProviderId        String
+  toProvider          Provider @relation("FailoverTo", fields: [toProviderId], references: [id], onDelete: Cascade)
+  reason              String   // timeout | rate_limit | auth_error | server_error | network
+  errorMessage        String?
+  sessionId           String?
+  createdAt           DateTime @default(now())
+
+  @@index([createdAt])
+}
