@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -50,5 +51,36 @@ test
 prompt
 
 server.log
-# Skills directory
+
+# Skills directory (internal only — not part of the deployed app)
 /skills/
+
+# Local SQLite database (Marq uses Postgres in production on Vercel)
+/db/*.db
+/db/*.db-journal
+*.db
+*.db-journal
+
+# z-ai scaffolding (internal dev tooling)
+/.zscripts/
+/z-ai-config/
+
+# Local upload / download artifacts
+/upload/
+/download/
+
+# Prisma migrations binary
+/prisma/migrations/dev.db*
+
+# OS / editor
+Thumbs.db
+.vscode/
+.idea/
+
+# Vercel local build output
+.vercel/
+
+# Local env (kept off git)
+.env
+.env.local
+.env.*.local

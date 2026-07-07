@@ -1,16 +1,16 @@
-// Marq AI Aggregator — Prisma schema (SQLite variant, used in local dev)
+// Marq AI Aggregator — Prisma schema (PostgreSQL variant)
 //
-// In production (Vercel), prisma/schema.postgres.prisma is used instead.
-// The vercel-build.sh script handles swapping the schema file in before
-// `prisma generate` runs. Keep this file and schema.postgres.prisma in sync
-// whenever you change models.
+// This is the schema used in production (Vercel + Postgres).
+// It mirrors prisma/schema.prisma (SQLite) — keep the two in sync when you
+// change models. The Vercel build script (vercel-build.sh) swaps this file
+// in before running `prisma generate` and `prisma db push`.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
