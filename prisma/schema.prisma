@@ -33,6 +33,7 @@ model Provider {
   healthLogs     HealthLog[]
   failoversFrom  FailoverLog[] @relation("FailoverFrom")
   failoversTo    FailoverLog[] @relation("FailoverTo")
+  agentSteps     AgentStep[]
 }
 
 model HealthLog {
@@ -86,4 +87,56 @@ model FailoverLog {
   createdAt       DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Agent module
+// ─────────────────────────────────────────────────────────────
+// An AgentTask is a user-submitted goal that the agent loop tries to
+// accomplish using tools. Each iteration of the ReAct loop produces an
+// AgentStep: thought + action (tool call) + observation, or a final answer.
+// Every LLM call inside the loop runs through the failover engine, so if
+// the primary provider fails mid-task, the agent transparently continues
+// with the next provider in the priority chain.
+
+model AgentTask {
+  id                String   @id @default(cuid())
+  title             String
+  goal              String
+  status            String   @default("pending") // pending | running | completed | failed | cancelled
+  maxSteps          Int      @default(8)
+  primaryProviderId String?
+  finalAnswer       String?
+  errorMessage      String?
+  totalLatencyMs    Int?
+  totalTokensUsed   Int?
+  failedOverCount   Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  steps             AgentStep[]
+
+  @@index([createdAt])
+  @@index([status])
+}
+
+model AgentStep {
+  id              String    @id @default(cuid())
+  taskId          String
+  task            AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  stepNumber      Int
+  thought         String?
+  action          String?   // tool name, or "final_answer"
+  actionInput     String?   // JSON-encoded tool input
+  observation     String?   // tool output (string)
+  providerId      String?
+  provider        Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  model           String?
+  latencyMs       Int?
+  tokensUsed      Int?
+  failedOver      Boolean   @default(false)
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+
+  @@index([taskId, stepNumber])
 }

@@ -49,6 +49,15 @@ import {
   ChevronUp,
   ChevronDown,
   CircleDot,
+  Brain,
+  Wrench,
+  Play,
+  RefreshCw,
+  Search,
+  Calculator,
+  FileText,
+  Timer,
+  ChevronRight,
 } from "lucide-react";
 
 // ---------- Types ----------
@@ -136,6 +145,58 @@ interface FailoverLog {
   toProvider: { id: string; name: string; displayName: string; color: string };
 }
 
+interface AgentTool {
+  name: string;
+  description: string;
+  signature: string;
+  examples: string[];
+}
+
+interface AgentStep {
+  id: string;
+  stepNumber: number;
+  thought: string | null;
+  action: string | null;
+  actionInput: string | null;
+  observation: string | null;
+  providerId: string | null;
+  model: string | null;
+  latencyMs: number | null;
+  tokensUsed: number | null;
+  failedOver: boolean;
+  errorMessage: string | null;
+  createdAt: string;
+  provider?: {
+    id: string;
+    name: string;
+    displayName: string;
+    color: string;
+    icon: string;
+  } | null;
+}
+
+interface AgentTask {
+  id: string;
+  title: string;
+  goal: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  maxSteps: number;
+  primaryProviderId: string | null;
+  finalAnswer: string | null;
+  errorMessage: string | null;
+  totalLatencyMs: number | null;
+  totalTokensUsed: number | null;
+  failedOverCount: number;
+  stepCount: number;
+  lastAction: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AgentTaskFull extends AgentTask {
+  steps: AgentStep[];
+}
+
 // ---------- Helpers ----------
 const statusMeta: Record<Provider["status"], { label: string; color: string; icon: typeof CheckCircle2 }> = {
   healthy: { label: "Healthy", color: "#10b981", icon: CheckCircle2 },
@@ -182,7 +243,7 @@ const reasonLabel: Record<string, string> = {
 
 // ---------- Main Page ----------
 export default function Home() {
-  const [tab, setTab] = useState<"chat" | "providers" | "health" | "failovers">("chat");
+  const [tab, setTab] = useState<"chat" | "agent" | "providers" | "health" | "failovers">("chat");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -449,6 +510,10 @@ export default function Home() {
                 <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Chat</span>
               </TabsTrigger>
+              <TabsTrigger value="agent" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Brain className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Agent</span>
+              </TabsTrigger>
               <TabsTrigger value="providers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
                 <Settings2 className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Providers</span>
@@ -660,6 +725,11 @@ export default function Home() {
             </div>
           </TabsContent>
 
+          {/* AGENT TAB */}
+          <TabsContent value="agent" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <AgentPanel providers={providers} onProvidersChanged={refreshAll} />
+          </TabsContent>
+
           {/* PROVIDERS TAB */}
           <TabsContent value="providers" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
             <ProvidersPanel
@@ -682,6 +752,642 @@ export default function Home() {
       </main>
 
       <Toaster />
+    </div>
+  );
+}
+
+// ---------- Agent Panel ----------
+const toolIcons: Record<string, typeof Search> = {
+  web_search: Search,
+  calculator: Calculator,
+  current_time: Timer,
+  text_summary: FileText,
+  final_answer: CheckCircle2,
+};
+
+const taskStatusMeta: Record<AgentTask["status"], { label: string; color: string; icon: typeof CheckCircle2 }> = {
+  pending: { label: "Pending", color: "#6b7280", icon: CircleDot },
+  running: { label: "Running", color: "#3b82f6", icon: Loader2 },
+  completed: { label: "Completed", color: "#10b981", icon: CheckCircle2 },
+  failed: { label: "Failed", color: "#ef4444", icon: XCircle },
+  cancelled: { label: "Cancelled", color: "#6b7280", icon: XCircle },
+};
+
+function AgentPanel({
+  providers,
+  onProvidersChanged,
+}: {
+  providers: Provider[];
+  onProvidersChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [tasks, setTasks] = useState<AgentTask[]>([]);
+  const [tools, setTools] = useState<AgentTool[]>([]);
+  const [activeTask, setActiveTask] = useState<AgentTaskFull | null>(null);
+  const [goal, setGoal] = useState("");
+  const [maxSteps, setMaxSteps] = useState(6);
+  const [primaryProviderId, setPrimaryProviderId] = useState<string>("");
+  const [running, setRunning] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(true);
+
+  // Load tools list once.
+  useEffect(() => {
+    fetch("/api/agent/tools")
+      .then((r) => r.json())
+      .then((d) => setTools(d.tools ?? []))
+      .catch(() => {});
+  }, []);
+
+  // Load tasks list.
+  const loadTasks = useCallback(async () => {
+    const res = await fetch("/api/agent/tasks");
+    const data = await res.json();
+    setTasks(data.tasks ?? []);
+    setLoadingTasks(false);
+  }, []);
+
+  // Load a single task with steps.
+  const loadTask = useCallback(async (id: string) => {
+    const res = await fetch(`/api/agent/tasks/${id}`);
+    if (res.ok) {
+      const data = await res.json();
+      setActiveTask(data.task);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTasks();
+  }, [loadTasks]);
+
+  // Default primary provider = first active.
+  useEffect(() => {
+    if (!primaryProviderId && providers.length > 0) {
+      setPrimaryProviderId(providers[0].id);
+    }
+  }, [providers, primaryProviderId]);
+
+  // Poll for updates while a task is running.
+  useEffect(() => {
+    if (!running || !activeTask) return;
+    const interval = setInterval(async () => {
+      await loadTask(activeTask.id);
+      await loadTasks();
+      if (activeTask.status === "completed" || activeTask.status === "failed") {
+        setRunning(false);
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [running, activeTask, loadTask, loadTasks]);
+
+  const createAndRun = async () => {
+    const trimmed = goal.trim();
+    if (!trimmed || running) return;
+    setRunning(true);
+    setLoadingTasks(true);
+    try {
+      const res = await fetch("/api/agent/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goal: trimmed,
+          maxSteps,
+          primaryProviderId: primaryProviderId || undefined,
+          runImmediately: true,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || err.error || "Failed to run task");
+      }
+      const data = await res.json();
+      setActiveTask(data.task);
+      setGoal("");
+      await loadTasks();
+      if (data.task?.status === "completed" || data.task?.status === "failed") {
+        setRunning(false);
+        if (data.task.status === "completed") {
+          toast({
+            title: "Agent completed",
+            description: `Used ${data.task.steps.length} step(s) to finish the task.`,
+          });
+        } else {
+          toast({
+            title: "Agent failed",
+            description: data.task.errorMessage ?? "Unknown error",
+            variant: "destructive",
+          });
+        }
+      } else {
+        // Still running — keep polling.
+        setRunning(true);
+      }
+      // Refresh provider health (agent calls went through failover engine).
+      onProvidersChanged();
+    } catch (err) {
+      toast({
+        title: "Agent run failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+      setRunning(false);
+    } finally {
+      setLoadingTasks(false);
+    }
+  };
+
+  const rerunTask = async (id: string) => {
+    setRunning(true);
+    try {
+      const res = await fetch(`/api/agent/tasks/${id}?restart=1`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to rerun task");
+      const data = await res.json();
+      setActiveTask(data.task);
+      await loadTasks();
+      if (data.task?.status === "completed" || data.task?.status === "failed") {
+        setRunning(false);
+      }
+      onProvidersChanged();
+    } catch (err) {
+      toast({
+        title: "Rerun failed",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+      setRunning(false);
+    }
+  };
+
+  const deleteTask = async (id: string) => {
+    await fetch(`/api/agent/tasks/${id}`, { method: "DELETE" });
+    if (activeTask?.id === id) setActiveTask(null);
+    await loadTasks();
+    toast({ title: "Task deleted" });
+  };
+
+  const sampleGoals = [
+    "What's the latest AI news this week? Summarize the top 3 stories.",
+    "Calculate the monthly payment on a $250,000 mortgage at 7% over 30 years.",
+    "What time is it now? Then tell me how many hours until midnight.",
+    "Search for the current OpenAI CEO and summarize their background in 2 sentences.",
+  ];
+
+  return (
+    <div className="max-w-6xl mx-auto p-4 md:p-8">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+          <Brain className="w-6 h-6 text-emerald-600" />
+          Agent
+        </h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Autonomous ReAct agent with tool access. Every step runs through the same failover engine as chat — if one provider fails mid-task, the next takes over.
+        </p>
+      </div>
+
+      {/* Goal Composer */}
+      <Card className="mb-6 border-emerald-200 dark:border-emerald-900">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-emerald-600" />
+            New Task
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Describe a goal. The agent will reason, call tools, and return a final answer.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Textarea
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            placeholder="e.g. Research the latest OpenAI announcement and write a 3-bullet summary."
+            rows={3}
+            disabled={running}
+            className="resize-none"
+          />
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <Label className="text-xs text-slate-500">Primary provider</Label>
+              <select
+                value={primaryProviderId}
+                onChange={(e) => setPrimaryProviderId(e.target.value)}
+                disabled={running}
+                className="block mt-1 px-3 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-md bg-transparent"
+              >
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>{p.displayName}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs text-slate-500">Max steps</Label>
+              <select
+                value={maxSteps}
+                onChange={(e) => setMaxSteps(Number(e.target.value))}
+                disabled={running}
+                className="block mt-1 px-3 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-md bg-transparent"
+              >
+                {[3, 4, 5, 6, 8, 10].map((n) => (
+                  <option key={n} value={n}>{n} steps</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1" />
+            <Button
+              onClick={createAndRun}
+              disabled={!goal.trim() || running}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              {running ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4 mr-2" />
+              )}
+              {running ? "Running…" : "Run Agent"}
+            </Button>
+          </div>
+
+          {/* Sample goals */}
+          {!running && !goal && (
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100 dark:border-slate-900">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wide w-full mb-1">Try:</span>
+              {sampleGoals.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setGoal(s)}
+                  className="text-xs px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-800 hover:border-emerald-400 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20 transition-all text-left"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Task list */}
+        <div className="lg:col-span-1 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+              Recent Tasks ({tasks.length})
+            </h2>
+            <Button variant="ghost" size="sm" onClick={loadTasks} disabled={loadingTasks}>
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingTasks ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+
+          {tasks.length === 0 && !loadingTasks && (
+            <Card>
+              <CardContent className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
+                No agent tasks yet. Submit a goal above to begin.
+              </CardContent>
+            </Card>
+          )}
+
+          {tasks.map((t) => {
+            const Status = taskStatusMeta[t.status].icon;
+            const isActive = activeTask?.id === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => loadTask(t.id)}
+                className={`w-full text-left p-3 rounded-lg border transition-all group ${
+                  isActive
+                    ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20"
+                    : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900"
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <Status
+                    className={`w-4 h-4 mt-0.5 flex-shrink-0 ${t.status === "running" ? "animate-spin" : ""}`}
+                    style={{ color: taskStatusMeta[t.status].color }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{t.title}</div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      {t.stepCount} step{t.stepCount !== 1 ? "s" : ""}
+                      {t.failedOverCount > 0 && (
+                        <span className="text-amber-600 dark:text-amber-400 ml-1">
+                          • {t.failedOverCount} failover{t.failedOverCount !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                      {t.totalLatencyMs != null && (
+                        <span className="ml-1">• {(t.totalLatencyMs / 1000).toFixed(1)}s</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteTask(t.id);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all p-1"
+                    aria-label="Delete task"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Active task detail */}
+        <div className="lg:col-span-2">
+          {activeTask ? (
+            <AgentTaskDetail
+              task={activeTask}
+              running={running}
+              onRerun={() => rerunTask(activeTask.id)}
+              providers={providers}
+            />
+          ) : (
+            <Card className="h-full">
+              <CardContent className="py-16 text-center">
+                <Brain className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700 mb-3" />
+                <h3 className="font-semibold text-slate-600 dark:text-slate-400">No task selected</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
+                  Submit a goal above to start a new task, or click a recent task on the left to view its steps.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
+
+      {/* Tools reference */}
+      <Card className="mt-6">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-slate-500" />
+            Available Tools
+          </CardTitle>
+          <CardDescription className="text-xs">
+            The agent can call any of these tools. Each tool is a pure function — it returns a string observation that goes back into the agent's scratchpad.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {tools.map((t) => {
+              const Icon = toolIcons[t.name] ?? Wrench;
+              return (
+                <div
+                  key={t.name}
+                  className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50"
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Icon className="w-4 h-4 text-emerald-600" />
+                    <code className="text-xs font-mono font-semibold">{t.name}</code>
+                  </div>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    {t.description}
+                  </p>
+                  <div className="mt-2 text-[10px] font-mono text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-950 px-2 py-1 rounded border border-slate-100 dark:border-slate-900">
+                    {t.signature}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function AgentTaskDetail({
+  task,
+  running,
+  onRerun,
+  providers,
+}: {
+  task: AgentTaskFull;
+  running: boolean;
+  onRerun: () => void;
+  providers: Provider[];
+}) {
+  const Status = taskStatusMeta[task.status].icon;
+  const totalSteps = task.steps.length;
+  const isRunning = task.status === "running" || running;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <Status
+                className={`w-4 h-4 ${task.status === "running" ? "animate-spin" : ""}`}
+                style={{ color: taskStatusMeta[task.status].color }}
+              />
+              <Badge
+                className="text-[10px] py-0 h-4"
+                style={{
+                  backgroundColor: `${taskStatusMeta[task.status].color}20`,
+                  color: taskStatusMeta[task.status].color,
+                }}
+              >
+                {taskStatusMeta[task.status].label}
+              </Badge>
+              {task.primaryProviderId && (
+                <Badge variant="outline" className="text-[10px] py-0 h-4">
+                  primary: {providers.find((p) => p.id === task.primaryProviderId)?.displayName ?? "—"}
+                </Badge>
+              )}
+            </div>
+            <CardTitle className="text-base leading-tight">{task.title}</CardTitle>
+            <CardDescription className="text-xs mt-1">
+              {totalSteps} / {task.maxSteps} steps
+              {task.failedOverCount > 0 && (
+                <span className="text-amber-600 dark:text-amber-400 ml-2">
+                  • {task.failedOverCount} failover{task.failedOverCount !== 1 ? "s" : ""}
+                </span>
+              )}
+              {task.totalLatencyMs != null && (
+                <span className="ml-2">• {(task.totalLatencyMs / 1000).toFixed(1)}s total</span>
+              )}
+              {task.totalTokensUsed != null && task.totalTokensUsed > 0 && (
+                <span className="ml-2">• ~{task.totalTokensUsed} tokens</span>
+              )}
+            </CardDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRerun}
+            disabled={isRunning}
+            className="flex-shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isRunning ? "animate-spin" : ""}`} />
+            Rerun
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Goal */}
+        <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+          <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">
+            Goal
+          </div>
+          <div className="text-sm">{task.goal}</div>
+        </div>
+
+        {/* Steps */}
+        <div className="space-y-2">
+          {task.steps.map((step, idx) => (
+            <AgentStepCard key={step.id} step={step} isLast={idx === task.steps.length - 1} />
+          ))}
+          {isRunning && (
+            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 p-3">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Agent is reasoning…</span>
+            </div>
+          )}
+        </div>
+
+        {/* Final answer */}
+        {task.finalAnswer && (
+          <div className="p-4 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-400 mb-2 font-semibold">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Final Answer
+            </div>
+            <div className="text-sm leading-relaxed whitespace-pre-wrap text-emerald-900 dark:text-emerald-100">
+              {task.finalAnswer}
+            </div>
+          </div>
+        )}
+
+        {/* Error */}
+        {task.errorMessage && task.status === "failed" && (
+          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+            <div className="flex items-center gap-2 text-xs text-red-700 dark:text-red-400 font-semibold mb-1">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Error
+            </div>
+            <div className="text-xs text-red-800 dark:text-red-300">{task.errorMessage}</div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AgentStepCard({ step, isLast }: { step: AgentStep; isLast: boolean }) {
+  const isFinal = step.action === "final_answer";
+  const isError = Boolean(step.errorMessage);
+  const Icon = isFinal
+    ? CheckCircle2
+    : isError
+      ? XCircle
+      : toolIcons[step.action ?? ""] ?? Wrench;
+  const iconColor = isFinal
+    ? "#10b981"
+    : isError
+      ? "#ef4444"
+      : "#3b82f6";
+
+  // Try to pretty-print the action input JSON.
+  let prettyInput = step.actionInput;
+  if (step.actionInput) {
+    try {
+      prettyInput = JSON.stringify(JSON.parse(step.actionInput), null, 2);
+    } catch {
+      // keep raw
+    }
+  }
+
+  return (
+    <div className="relative pl-8">
+      {/* Vertical connector */}
+      {!isLast && (
+        <div className="absolute left-[11px] top-7 bottom-0 w-px bg-slate-200 dark:bg-slate-800" />
+      )}
+      {/* Step number bubble */}
+      <div
+        className="absolute left-0 top-1 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border-2 bg-white dark:bg-slate-900"
+        style={{ borderColor: iconColor, color: iconColor }}
+      >
+        {step.stepNumber}
+      </div>
+
+      <div className="pb-3">
+        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+          <Icon className="w-3.5 h-3.5" style={{ color: iconColor }} />
+          <span className="text-xs font-semibold">
+            {isFinal
+              ? "Final Answer"
+              : isError
+                ? "Parse Error"
+                : step.action
+                  ? `Tool: ${step.action}`
+                  : "Reasoning"}
+          </span>
+          {step.provider && (
+            <Badge
+              variant="outline"
+              className="text-[10px] py-0 h-4 font-mono"
+              style={{ borderColor: step.provider.color, color: step.provider.color }}
+            >
+              {step.provider.displayName}
+            </Badge>
+          )}
+          {step.model && (
+            <span className="text-[10px] font-mono text-slate-400">{step.model}</span>
+          )}
+          {step.latencyMs != null && (
+            <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
+              <Clock className="w-2.5 h-2.5" />
+              {step.latencyMs}ms
+            </span>
+          )}
+          {step.failedOver && (
+            <Badge className="text-[10px] py-0 h-4 bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 hover:bg-amber-100">
+              <Zap className="w-2.5 h-2.5 mr-1" />
+              Failed over
+            </Badge>
+          )}
+        </div>
+
+        {/* Thought */}
+        {step.thought && (
+          <div className="text-xs text-slate-600 dark:text-slate-400 italic mb-1.5 leading-relaxed">
+            <span className="font-semibold not-italic">Thought: </span>
+            {step.thought}
+          </div>
+        )}
+
+        {/* Action input */}
+        {prettyInput && !isFinal && (
+          <div className="mb-1.5">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-500 mb-0.5">
+              Input
+            </div>
+            <pre className="text-[11px] font-mono bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-900 rounded p-2 overflow-x-auto max-h-40">
+              {prettyInput}
+            </pre>
+          </div>
+        )}
+
+        {/* Observation */}
+        {step.observation && (
+          <div className="mb-1.5">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-500 mb-0.5">
+              {isFinal ? "Answer" : "Observation"}
+            </div>
+            <pre className="text-[11px] font-mono whitespace-pre-wrap break-words bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-900 rounded p-2 max-h-60 overflow-y-auto">
+              {step.observation}
+            </pre>
+          </div>
+        )}
+
+        {/* Error message */}
+        {step.errorMessage && (
+          <div className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded p-2">
+            {step.errorMessage}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
