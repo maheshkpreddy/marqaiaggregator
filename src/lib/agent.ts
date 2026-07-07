@@ -23,6 +23,7 @@ import { runWithFailover } from "@/lib/failover";
 import type { ChatMessage, FailoverReason } from "@/lib/providers";
 import { ProviderError } from "@/lib/providers";
 import { getTool, toolDescriptionsForPrompt } from "@/lib/tools";
+import { getTemplate } from "@/lib/agent-templates";
 
 export interface AgentRunOptions {
   taskId: string;
@@ -94,7 +95,9 @@ export async function runAgentTask(opts: AgentRunOptions): Promise<AgentRunResul
   }
 
   // Build the static system prompt once.
-  const systemPrompt = buildSystemPrompt(task.goal);
+  // The template is selected by task.agentType (falls back to "general").
+  const template = getTemplate(task.agentType);
+  const systemPrompt = buildSystemPrompt(task.goal, template);
 
   // Scratchpad: prior steps as assistant/user pairs the LLM can see.
   // We re-send the full history each iteration so the model has context.
@@ -184,10 +187,43 @@ export async function runAgentTask(opts: AgentRunOptions): Promise<AgentRunResul
 
       // Did the LLM ask to call a tool?
       if (parsed.action && parsed.action !== "final_answer") {
+        // Enforce the template's tool whitelist. If the LLM asked for a tool
+        // the current persona isn't allowed to use, return an error observation
+        // so the model picks a different approach on the next iteration.
+        if (!template.tools.includes(parsed.action)) {
+          const allowedList = template.tools.join(", ");
+          await db.agentStep.create({
+            data: {
+              taskId: task.id,
+              stepNumber,
+              thought: parsed.thought,
+              action: parsed.action,
+              actionInput: JSON.stringify(parsed.actionInput ?? null),
+              observation: `Tool "${parsed.action}" is not allowed for the ${template.displayName} agent. Allowed tools: ${allowedList}.`,
+              providerId: finalProvider.id,
+              model: outcome.result.model,
+              latencyMs: outcome.result.latencyMs,
+              tokensUsed: outcome.result.tokensUsed ?? null,
+              failedOver: outcome.failedOver,
+            },
+          });
+          task.steps = [
+            ...task.steps,
+            {
+              stepNumber,
+              thought: parsed.thought,
+              action: parsed.action,
+              actionInput: JSON.stringify(parsed.actionInput ?? null),
+              observation: `Tool "${parsed.action}" is not allowed for the ${template.displayName} agent.`,
+            } as any,
+          ];
+          continue;
+        }
+
         const tool = getTool(parsed.action);
         let observation: string;
         if (!tool) {
-          observation = `Error: unknown tool "${parsed.action}". Available tools: ${toolDescriptionsForPrompt()
+          observation = `Error: unknown tool "${parsed.action}". Available tools: ${toolDescriptionsForPrompt(template.tools)
             .split("\n")
             .filter((l) => l.startsWith("### "))
             .map((l) => l.replace("### ", ""))
@@ -290,13 +326,13 @@ async function finishTask(taskId: string, result: AgentRunResult): Promise<Agent
 // Prompt building
 // ─────────────────────────────────────────────────────────────
 
-function buildSystemPrompt(goal: string): string {
+function buildSystemPrompt(goal: string, template: { displayName: string; persona: string; tools: string[] }): string {
   return [
-    "You are Marq Agent — an AI assistant that can reason step-by-step and call tools to accomplish the user's goal.",
+    template.persona,
     "",
     "## Available tools",
     "",
-    toolDescriptionsForPrompt(),
+    toolDescriptionsForPrompt(template.tools),
     "",
     "## How to respond",
     "",
@@ -315,10 +351,11 @@ function buildSystemPrompt(goal: string): string {
     "",
     "## Rules",
     "- Always think before you act. Use THOUGHT to plan.",
+    "- Only call tools listed in the Available tools section above. Do not invent tool names.",
     "- If you have enough information, give FINAL_ANSWER. Do not call unnecessary tools.",
     "- ACTION_INPUT must be valid JSON on a single line.",
-    "- Never invent tool names. Only use the tools listed above.",
     "- If a tool returns an error, try a different approach or give FINAL_ANSWER acknowledging the limitation.",
+    "- Stay in character as the " + template.displayName + " agent.",
     "",
     "## The user's goal",
     "",

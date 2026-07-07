@@ -97,6 +97,7 @@ model AgentTask {
   id                String   @id @default(cuid())
   title             String
   goal              String
+  agentType         String   @default("general")
   status            String   @default("pending")
   maxSteps          Int      @default(8)
   primaryProviderId String?
@@ -112,6 +113,7 @@ model AgentTask {
 
   @@index([createdAt])
   @@index([status])
+  @@index([agentType])
 }
 
 model AgentStep {

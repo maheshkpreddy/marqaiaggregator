@@ -1,0 +1,702 @@
+   720→                      Marq AI automatically falls over to the next provider if the primary fails.
+   721→                    </div>
+   722→                  </div>
+   723→                </div>
+   724→              </section>
+   725→            </div>
+   726→          </TabsContent>
+   727→
+   728→          {/* AGENT TAB */}
+   729→          <TabsContent value="agent" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+   730→            <AgentPanel providers={providers} onProvidersChanged={refreshAll} />
+   731→          </TabsContent>
+   732→
+   733→          {/* PROVIDERS TAB */}
+   734→          <TabsContent value="providers" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+   735→            <ProvidersPanel
+   736→              providers={providers}
+   737→              onChanged={refreshAll}
+   738→              onMovePriority={(id, dir) => movePriority(id, dir, providers, setProviders, refreshAll)}
+   739→            />
+   740→          </TabsContent>
+   741→
+   742→          {/* HEALTH TAB */}
+   743→          <TabsContent value="health" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+   744→            <HealthPanel providers={providers} failovers={failovers} onRefresh={refreshAll} />
+   745→          </TabsContent>
+   746→
+   747→          {/* FAILOVER LOG TAB */}
+   748→          <TabsContent value="failovers" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+   749→            <FailoverLogPanel failovers={failovers} onRefresh={loadFailovers} />
+   750→          </TabsContent>
+   751→        </Tabs>
+   752→      </main>
+   753→
+   754→      <Toaster />
+   755→    </div>
+   756→  );
+   757→}
+   758→
+   759→// ---------- Agent Panel ----------
+   760→const toolIcons: Record<string, typeof Search> = {
+   761→  web_search: Search,
+   762→  calculator: Calculator,
+   763→  current_time: Timer,
+   764→  text_summary: FileText,
+   765→  final_answer: CheckCircle2,
+   766→};
+   767→
+   768→const taskStatusMeta: Record<AgentTask["status"], { label: string; color: string; icon: typeof CheckCircle2 }> = {
+   769→  pending: { label: "Pending", color: "#6b7280", icon: CircleDot },
+   770→  running: { label: "Running", color: "#3b82f6", icon: Loader2 },
+   771→  completed: { label: "Completed", color: "#10b981", icon: CheckCircle2 },
+   772→  failed: { label: "Failed", color: "#ef4444", icon: XCircle },
+   773→  cancelled: { label: "Cancelled", color: "#6b7280", icon: XCircle },
+   774→};
+   775→
+   776→function AgentPanel({
+   777→  providers,
+   778→  onProvidersChanged,
+   779→}: {
+   780→  providers: Provider[];
+   781→  onProvidersChanged: () => void;
+   782→}) {
+   783→  const { toast } = useToast();
+   784→  const [tasks, setTasks] = useState<AgentTask[]>([]);
+   785→  const [tools, setTools] = useState<AgentTool[]>([]);
+   786→  const [activeTask, setActiveTask] = useState<AgentTaskFull | null>(null);
+   787→  const [goal, setGoal] = useState("");
+   788→  const [maxSteps, setMaxSteps] = useState(6);
+   789→  const [primaryProviderId, setPrimaryProviderId] = useState<string>("");
+   790→  const [running, setRunning] = useState(false);
+   791→  const [loadingTasks, setLoadingTasks] = useState(true);
+   792→
+   793→  // Load tools list once.
+   794→  useEffect(() => {
+   795→    fetch("/api/agent/tools")
+   796→      .then((r) => r.json())
+   797→      .then((d) => setTools(d.tools ?? []))
+   798→      .catch(() => {});
+   799→  }, []);
+   800→
+   801→  // Load tasks list.
+   802→  const loadTasks = useCallback(async () => {
+   803→    const res = await fetch("/api/agent/tasks");
+   804→    const data = await res.json();
+   805→    setTasks(data.tasks ?? []);
+   806→    setLoadingTasks(false);
+   807→  }, []);
+   808→
+   809→  // Load a single task with steps.
+   810→  const loadTask = useCallback(async (id: string) => {
+   811→    const res = await fetch(`/api/agent/tasks/${id}`);
+   812→    if (res.ok) {
+   813→      const data = await res.json();
+   814→      setActiveTask(data.task);
+   815→    }
+   816→  }, []);
+   817→
+   818→  useEffect(() => {
+   819→    loadTasks();
+   820→  }, [loadTasks]);
+   821→
+   822→  // Default primary provider = first active.
+   823→  useEffect(() => {
+   824→    if (!primaryProviderId && providers.length > 0) {
+   825→      setPrimaryProviderId(providers[0].id);
+   826→    }
+   827→  }, [providers, primaryProviderId]);
+   828→
+   829→  // Poll for updates while a task is running.
+   830→  useEffect(() => {
+   831→    if (!running || !activeTask) return;
+   832→    const interval = setInterval(async () => {
+   833→      await loadTask(activeTask.id);
+   834→      await loadTasks();
+   835→      if (activeTask.status === "completed" || activeTask.status === "failed") {
+   836→        setRunning(false);
+   837→      }
+   838→    }, 1500);
+   839→    return () => clearInterval(interval);
+   840→  }, [running, activeTask, loadTask, loadTasks]);
+   841→
+   842→  const createAndRun = async () => {
+   843→    const trimmed = goal.trim();
+   844→    if (!trimmed || running) return;
+   845→    setRunning(true);
+   846→    setLoadingTasks(true);
+   847→    try {
+   848→      const res = await fetch("/api/agent/tasks", {
+   849→        method: "POST",
+   850→        headers: { "Content-Type": "application/json" },
+   851→        body: JSON.stringify({
+   852→          goal: trimmed,
+   853→          maxSteps,
+   854→          primaryProviderId: primaryProviderId || undefined,
+   855→          runImmediately: true,
+   856→        }),
+   857→      });
+   858→      if (!res.ok) {
+   859→        const err = await res.json().catch(() => ({}));
+   860→        throw new Error(err.detail || err.error || "Failed to run task");
+   861→      }
+   862→      const data = await res.json();
+   863→      setActiveTask(data.task);
+   864→      setGoal("");
+   865→      await loadTasks();
+   866→      if (data.task?.status === "completed" || data.task?.status === "failed") {
+   867→        setRunning(false);
+   868→        if (data.task.status === "completed") {
+   869→          toast({
+   870→            title: "Agent completed",
+   871→            description: `Used ${data.task.steps.length} step(s) to finish the task.`,
+   872→          });
+   873→        } else {
+   874→          toast({
+   875→            title: "Agent failed",
+   876→            description: data.task.errorMessage ?? "Unknown error",
+   877→            variant: "destructive",
+   878→          });
+   879→        }
+   880→      } else {
+   881→        // Still running — keep polling.
+   882→        setRunning(true);
+   883→      }
+   884→      // Refresh provider health (agent calls went through failover engine).
+   885→      onProvidersChanged();
+   886→    } catch (err) {
+   887→      toast({
+   888→        title: "Agent run failed",
+   889→        description: err instanceof Error ? err.message : String(err),
+   890→        variant: "destructive",
+   891→      });
+   892→      setRunning(false);
+   893→    } finally {
+   894→      setLoadingTasks(false);
+   895→    }
+   896→  };
+   897→
+   898→  const rerunTask = async (id: string) => {
+   899→    setRunning(true);
+   900→    try {
+   901→      const res = await fetch(`/api/agent/tasks/${id}?restart=1`, { method: "POST" });
+   902→      if (!res.ok) throw new Error("Failed to rerun task");
+   903→      const data = await res.json();
+   904→      setActiveTask(data.task);
+   905→      await loadTasks();
+   906→      if (data.task?.status === "completed" || data.task?.status === "failed") {
+   907→        setRunning(false);
+   908→      }
+   909→      onProvidersChanged();
+   910→    } catch (err) {
+   911→      toast({
+   912→        title: "Rerun failed",
+   913→        description: err instanceof Error ? err.message : String(err),
+   914→        variant: "destructive",
+   915→      });
+   916→      setRunning(false);
+   917→    }
+   918→  };
+   919→
+   920→  const deleteTask = async (id: string) => {
+   921→    await fetch(`/api/agent/tasks/${id}`, { method: "DELETE" });
+   922→    if (activeTask?.id === id) setActiveTask(null);
+   923→    await loadTasks();
+   924→    toast({ title: "Task deleted" });
+   925→  };
+   926→
+   927→  const sampleGoals = [
+   928→    "What's the latest AI news this week? Summarize the top 3 stories.",
+   929→    "Calculate the monthly payment on a $250,000 mortgage at 7% over 30 years.",
+   930→    "What time is it now? Then tell me how many hours until midnight.",
+   931→    "Search for the current OpenAI CEO and summarize their background in 2 sentences.",
+   932→  ];
+   933→
+   934→  return (
+   935→    <div className="max-w-6xl mx-auto p-4 md:p-8">
+   936→      {/* Header */}
+   937→      <div className="mb-6">
+   938→        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+   939→          <Brain className="w-6 h-6 text-emerald-600" />
+   940→          Agent
+   941→        </h1>
+   942→        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+   943→          Autonomous ReAct agent with tool access. Every step runs through the same failover engine as chat — if one provider fails mid-task, the next takes over.
+   944→        </p>
+   945→      </div>
+   946→
+   947→      {/* Goal Composer */}
+   948→      <Card className="mb-6 border-emerald-200 dark:border-emerald-900">
+   949→        <CardHeader className="pb-3">
+   950→          <CardTitle className="text-base flex items-center gap-2">
+   951→            <Sparkles className="w-4 h-4 text-emerald-600" />
+   952→            New Task
+   953→          </CardTitle>
+   954→          <CardDescription className="text-xs">
+   955→            Describe a goal. The agent will reason, call tools, and return a final answer.
+   956→          </CardDescription>
+   957→        </CardHeader>
+   958→        <CardContent className="space-y-3">
+   959→          <Textarea
+   960→            value={goal}
+   961→            onChange={(e) => setGoal(e.target.value)}
+   962→            placeholder="e.g. Research the latest OpenAI announcement and write a 3-bullet summary."
+   963→            rows={3}
+   964→            disabled={running}
+   965→            className="resize-none"
+   966→          />
+   967→          <div className="flex flex-wrap items-end gap-3">
+   968→            <div>
+   969→              <Label className="text-xs text-slate-500">Primary provider</Label>
+   970→              <select
+   971→                value={primaryProviderId}
+   972→                onChange={(e) => setPrimaryProviderId(e.target.value)}
+   973→                disabled={running}
+   974→                className="block mt-1 px-3 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-md bg-transparent"
+   975→              >
+   976→                {providers.map((p) => (
+   977→                  <option key={p.id} value={p.id}>{p.displayName}</option>
+   978→                ))}
+   979→              </select>
+   980→            </div>
+   981→            <div>
+   982→              <Label className="text-xs text-slate-500">Max steps</Label>
+   983→              <select
+   984→                value={maxSteps}
+   985→                onChange={(e) => setMaxSteps(Number(e.target.value))}
+   986→                disabled={running}
+   987→                className="block mt-1 px-3 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-md bg-transparent"
+   988→              >
+   989→                {[3, 4, 5, 6, 8, 10].map((n) => (
+   990→                  <option key={n} value={n}>{n} steps</option>
+   991→                ))}
+   992→              </select>
+   993→            </div>
+   994→            <div className="flex-1" />
+   995→            <Button
+   996→              onClick={createAndRun}
+   997→              disabled={!goal.trim() || running}
+   998→              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+   999→            >
+  1000→              {running ? (
+  1001→                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+  1002→              ) : (
+  1003→                <Play className="w-4 h-4 mr-2" />
+  1004→              )}
+  1005→              {running ? "Running…" : "Run Agent"}
+  1006→            </Button>
+  1007→          </div>
+  1008→
+  1009→          {/* Sample goals */}
+  1010→          {!running && !goal && (
+  1011→            <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100 dark:border-slate-900">
+  1012→              <span className="text-[10px] text-slate-400 uppercase tracking-wide w-full mb-1">Try:</span>
+  1013→              {sampleGoals.map((s) => (
+  1014→                <button
+  1015→                  key={s}
+  1016→                  onClick={() => setGoal(s)}
+  1017→                  className="text-xs px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-800 hover:border-emerald-400 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20 transition-all text-left"
+  1018→                >
+  1019→                  {s}
+  1020→                </button>
+  1021→              ))}
+  1022→            </div>
+  1023→          )}
+  1024→        </CardContent>
+  1025→      </Card>
+  1026→
+  1027→      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  1028→        {/* Task list */}
+  1029→        <div className="lg:col-span-1 space-y-3">
+  1030→          <div className="flex items-center justify-between">
+  1031→            <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+  1032→              Recent Tasks ({tasks.length})
+  1033→            </h2>
+  1034→            <Button variant="ghost" size="sm" onClick={loadTasks} disabled={loadingTasks}>
+  1035→              <RefreshCw className={`w-3.5 h-3.5 ${loadingTasks ? "animate-spin" : ""}`} />
+  1036→            </Button>
+  1037→          </div>
+  1038→
+  1039→          {tasks.length === 0 && !loadingTasks && (
+  1040→            <Card>
+  1041→              <CardContent className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
+  1042→                No agent tasks yet. Submit a goal above to begin.
+  1043→              </CardContent>
+  1044→            </Card>
+  1045→          )}
+  1046→
+  1047→          {tasks.map((t) => {
+  1048→            const Status = taskStatusMeta[t.status].icon;
+  1049→            const isActive = activeTask?.id === t.id;
+  1050→            return (
+  1051→              <button
+  1052→                key={t.id}
+  1053→                onClick={() => loadTask(t.id)}
+  1054→                className={`w-full text-left p-3 rounded-lg border transition-all group ${
+  1055→                  isActive
+  1056→                    ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20"
+  1057→                    : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900"
+  1058→                }`}
+  1059→              >
+  1060→                <div className="flex items-start gap-2">
+  1061→                  <Status
+  1062→                    className={`w-4 h-4 mt-0.5 flex-shrink-0 ${t.status === "running" ? "animate-spin" : ""}`}
+  1063→                    style={{ color: taskStatusMeta[t.status].color }}
+  1064→                  />
+  1065→                  <div className="flex-1 min-w-0">
+  1066→                    <div className="text-sm font-medium truncate">{t.title}</div>
+  1067→                    <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+  1068→                      {t.stepCount} step{t.stepCount !== 1 ? "s" : ""}
+  1069→                      {t.failedOverCount > 0 && (
+  1070→                        <span className="text-amber-600 dark:text-amber-400 ml-1">
+  1071→                          • {t.failedOverCount} failover{t.failedOverCount !== 1 ? "s" : ""}
+  1072→                        </span>
+  1073→                      )}
+  1074→                      {t.totalLatencyMs != null && (
+  1075→                        <span className="ml-1">• {(t.totalLatencyMs / 1000).toFixed(1)}s</span>
+  1076→                      )}
+  1077→                    </div>
+  1078→                  </div>
+  1079→                  <button
+  1080→                    onClick={(e) => {
+  1081→                      e.stopPropagation();
+  1082→                      deleteTask(t.id);
+  1083→                    }}
+  1084→                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all p-1"
+  1085→                    aria-label="Delete task"
+  1086→                  >
+  1087→                    <Trash2 className="w-3.5 h-3.5" />
+  1088→                  </button>
+  1089→                </div>
+  1090→              </button>
+  1091→            );
+  1092→          })}
+  1093→        </div>
+  1094→
+  1095→        {/* Active task detail */}
+  1096→        <div className="lg:col-span-2">
+  1097→          {activeTask ? (
+  1098→            <AgentTaskDetail
+  1099→              task={activeTask}
+  1100→              running={running}
+  1101→              onRerun={() => rerunTask(activeTask.id)}
+  1102→              providers={providers}
+  1103→            />
+  1104→          ) : (
+  1105→            <Card className="h-full">
+  1106→              <CardContent className="py-16 text-center">
+  1107→                <Brain className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700 mb-3" />
+  1108→                <h3 className="font-semibold text-slate-600 dark:text-slate-400">No task selected</h3>
+  1109→                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
+  1110→                  Submit a goal above to start a new task, or click a recent task on the left to view its steps.
+  1111→                </p>
+  1112→              </CardContent>
+  1113→            </Card>
+  1114→          )}
+  1115→        </div>
+  1116→      </div>
+  1117→
+  1118→      {/* Tools reference */}
+  1119→      <Card className="mt-6">
+  1120→        <CardHeader className="pb-3">
+  1121→          <CardTitle className="text-sm flex items-center gap-2">
+  1122→            <Wrench className="w-4 h-4 text-slate-500" />
+  1123→            Available Tools
+  1124→          </CardTitle>
+  1125→          <CardDescription className="text-xs">
+  1126→            The agent can call any of these tools. Each tool is a pure function — it returns a string observation that goes back into the agent's scratchpad.
+  1127→          </CardDescription>
+  1128→        </CardHeader>
+  1129→        <CardContent>
+  1130→          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+  1131→            {tools.map((t) => {
+  1132→              const Icon = toolIcons[t.name] ?? Wrench;
+  1133→              return (
+  1134→                <div
+  1135→                  key={t.name}
+  1136→                  className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50"
+  1137→                >
+  1138→                  <div className="flex items-center gap-2 mb-1.5">
+  1139→                    <Icon className="w-4 h-4 text-emerald-600" />
+  1140→                    <code className="text-xs font-mono font-semibold">{t.name}</code>
+  1141→                  </div>
+  1142→                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+  1143→                    {t.description}
+  1144→                  </p>
+  1145→                  <div className="mt-2 text-[10px] font-mono text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-950 px-2 py-1 rounded border border-slate-100 dark:border-slate-900">
+  1146→                    {t.signature}
+  1147→                  </div>
+  1148→                </div>
+  1149→              );
+  1150→            })}
+  1151→          </div>
+  1152→        </CardContent>
+  1153→      </Card>
+  1154→    </div>
+  1155→  );
+  1156→}
+  1157→
+  1158→function AgentTaskDetail({
+  1159→  task,
+  1160→  running,
+  1161→  onRerun,
+  1162→  providers,
+  1163→}: {
+  1164→  task: AgentTaskFull;
+  1165→  running: boolean;
+  1166→  onRerun: () => void;
+  1167→  providers: Provider[];
+  1168→}) {
+  1169→  const Status = taskStatusMeta[task.status].icon;
+  1170→  const totalSteps = task.steps.length;
+  1171→  const isRunning = task.status === "running" || running;
+  1172→
+  1173→  return (
+  1174→    <Card>
+  1175→      <CardHeader className="pb-3">
+  1176→        <div className="flex items-start justify-between gap-2">
+  1177→          <div className="flex-1 min-w-0">
+  1178→            <div className="flex items-center gap-2 mb-1">
+  1179→              <Status
+  1180→                className={`w-4 h-4 ${task.status === "running" ? "animate-spin" : ""}`}
+  1181→                style={{ color: taskStatusMeta[task.status].color }}
+  1182→              />
+  1183→              <Badge
+  1184→                className="text-[10px] py-0 h-4"
+  1185→                style={{
+  1186→                  backgroundColor: `${taskStatusMeta[task.status].color}20`,
+  1187→                  color: taskStatusMeta[task.status].color,
+  1188→                }}
+  1189→              >
+  1190→                {taskStatusMeta[task.status].label}
+  1191→              </Badge>
+  1192→              {task.primaryProviderId && (
+  1193→                <Badge variant="outline" className="text-[10px] py-0 h-4">
+  1194→                  primary: {providers.find((p) => p.id === task.primaryProviderId)?.displayName ?? "—"}
+  1195→                </Badge>
+  1196→              )}
+  1197→            </div>
+  1198→            <CardTitle className="text-base leading-tight">{task.title}</CardTitle>
+  1199→            <CardDescription className="text-xs mt-1">
+  1200→              {totalSteps} / {task.maxSteps} steps
+  1201→              {task.failedOverCount > 0 && (
+  1202→                <span className="text-amber-600 dark:text-amber-400 ml-2">
+  1203→                  • {task.failedOverCount} failover{task.failedOverCount !== 1 ? "s" : ""}
+  1204→                </span>
+  1205→              )}
+  1206→              {task.totalLatencyMs != null && (
+  1207→                <span className="ml-2">• {(task.totalLatencyMs / 1000).toFixed(1)}s total</span>
+  1208→              )}
+  1209→              {task.totalTokensUsed != null && task.totalTokensUsed > 0 && (
+  1210→                <span className="ml-2">• ~{task.totalTokensUsed} tokens</span>
+  1211→              )}
+  1212→            </CardDescription>
+  1213→          </div>
+  1214→          <Button
+  1215→            variant="outline"
+  1216→            size="sm"
+  1217→            onClick={onRerun}
+  1218→            disabled={isRunning}
+  1219→            className="flex-shrink-0"
+  1220→          >
+  1221→            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isRunning ? "animate-spin" : ""}`} />
+  1222→            Rerun
+  1223→          </Button>
+  1224→        </div>
+  1225→      </CardHeader>
+  1226→      <CardContent className="space-y-3">
+  1227→        {/* Goal */}
+  1228→        <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+  1229→          <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">
+  1230→            Goal
+  1231→          </div>
+  1232→          <div className="text-sm">{task.goal}</div>
+  1233→        </div>
+  1234→
+  1235→        {/* Steps */}
+  1236→        <div className="space-y-2">
+  1237→          {task.steps.map((step, idx) => (
+  1238→            <AgentStepCard key={step.id} step={step} isLast={idx === task.steps.length - 1} />
+  1239→          ))}
+  1240→          {isRunning && (
+  1241→            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 p-3">
+  1242→              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+  1243→              <span>Agent is reasoning…</span>
+  1244→            </div>
+  1245→          )}
+  1246→        </div>
+  1247→
+  1248→        {/* Final answer */}
+  1249→        {task.finalAnswer && (
+  1250→          <div className="p-4 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+  1251→            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-400 mb-2 font-semibold">
+  1252→              <CheckCircle2 className="w-3.5 h-3.5" />
+  1253→              Final Answer
+  1254→            </div>
+  1255→            <div className="text-sm leading-relaxed whitespace-pre-wrap text-emerald-900 dark:text-emerald-100">
+  1256→              {task.finalAnswer}
+  1257→            </div>
+  1258→          </div>
+  1259→        )}
+  1260→
+  1261→        {/* Error */}
+  1262→        {task.errorMessage && task.status === "failed" && (
+  1263→          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+  1264→            <div className="flex items-center gap-2 text-xs text-red-700 dark:text-red-400 font-semibold mb-1">
+  1265→              <AlertTriangle className="w-3.5 h-3.5" />
+  1266→              Error
+  1267→            </div>
+  1268→            <div className="text-xs text-red-800 dark:text-red-300">{task.errorMessage}</div>
+  1269→          </div>
+  1270→        )}
+  1271→      </CardContent>
+  1272→    </Card>
+  1273→  );
+  1274→}
+  1275→
+  1276→function AgentStepCard({ step, isLast }: { step: AgentStep; isLast: boolean }) {
+  1277→  const isFinal = step.action === "final_answer";
+  1278→  const isError = Boolean(step.errorMessage);
+  1279→  const Icon = isFinal
+  1280→    ? CheckCircle2
+  1281→    : isError
+  1282→      ? XCircle
+  1283→      : toolIcons[step.action ?? ""] ?? Wrench;
+  1284→  const iconColor = isFinal
+  1285→    ? "#10b981"
+  1286→    : isError
+  1287→      ? "#ef4444"
+  1288→      : "#3b82f6";
+  1289→
+  1290→  // Try to pretty-print the action input JSON.
+  1291→  let prettyInput = step.actionInput;
+  1292→  if (step.actionInput) {
+  1293→    try {
+  1294→      prettyInput = JSON.stringify(JSON.parse(step.actionInput), null, 2);
+  1295→    } catch {
+  1296→      // keep raw
+  1297→    }
+  1298→  }
+  1299→
+  1300→  return (
+  1301→    <div className="relative pl-8">
+  1302→      {/* Vertical connector */}
+  1303→      {!isLast && (
+  1304→        <div className="absolute left-[11px] top-7 bottom-0 w-px bg-slate-200 dark:bg-slate-800" />
+  1305→      )}
+  1306→      {/* Step number bubble */}
+  1307→      <div
+  1308→        className="absolute left-0 top-1 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border-2 bg-white dark:bg-slate-900"
+  1309→        style={{ borderColor: iconColor, color: iconColor }}
+  1310→      >
+  1311→        {step.stepNumber}
+  1312→      </div>
+  1313→
+  1314→      <div className="pb-3">
+  1315→        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+  1316→          <Icon className="w-3.5 h-3.5" style={{ color: iconColor }} />
+  1317→          <span className="text-xs font-semibold">
+  1318→            {isFinal
+  1319→              ? "Final Answer"
+  1320→              : isError
+  1321→                ? "Parse Error"
+  1322→                : step.action
+  1323→                  ? `Tool: ${step.action}`
+  1324→                  : "Reasoning"}
+  1325→          </span>
+  1326→          {step.provider && (
+  1327→            <Badge
+  1328→              variant="outline"
+  1329→              className="text-[10px] py-0 h-4 font-mono"
+  1330→              style={{ borderColor: step.provider.color, color: step.provider.color }}
+  1331→            >
+  1332→              {step.provider.displayName}
+  1333→            </Badge>
+  1334→          )}
+  1335→          {step.model && (
+  1336→            <span className="text-[10px] font-mono text-slate-400">{step.model}</span>
+  1337→          )}
+  1338→          {step.latencyMs != null && (
+  1339→            <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
+  1340→              <Clock className="w-2.5 h-2.5" />
+  1341→              {step.latencyMs}ms
+  1342→            </span>
+  1343→          )}
+  1344→          {step.failedOver && (
+  1345→            <Badge className="text-[10px] py-0 h-4 bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 hover:bg-amber-100">
+  1346→              <Zap className="w-2.5 h-2.5 mr-1" />
+  1347→              Failed over
+  1348→            </Badge>
+  1349→          )}
+  1350→        </div>
+  1351→
+  1352→        {/* Thought */}
+  1353→        {step.thought && (
+  1354→          <div className="text-xs text-slate-600 dark:text-slate-400 italic mb-1.5 leading-relaxed">
+  1355→            <span className="font-semibold not-italic">Thought: </span>
+  1356→            {step.thought}
+  1357→          </div>
+  1358→        )}
+  1359→
+  1360→        {/* Action input */}
+  1361→        {prettyInput && !isFinal && (
+  1362→          <div className="mb-1.5">
+  1363→            <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-500 mb-0.5">
+  1364→              Input
+  1365→            </div>
+  1366→            <pre className="text-[11px] font-mono bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-900 rounded p-2 overflow-x-auto max-h-40">
+  1367→              {prettyInput}
+  1368→            </pre>
+  1369→          </div>
+  1370→        )}
+  1371→
+  1372→        {/* Observation */}
+  1373→        {step.observation && (
+  1374→          <div className="mb-1.5">
+  1375→            <div className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-500 mb-0.5">
+  1376→              {isFinal ? "Answer" : "Observation"}
+  1377→            </div>
+  1378→            <pre className="text-[11px] font-mono whitespace-pre-wrap break-words bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-900 rounded p-2 max-h-60 overflow-y-auto">
+  1379→              {step.observation}
+  1380→            </pre>
+  1381→          </div>
+  1382→        )}
+  1383→
+  1384→        {/* Error message */}
+  1385→        {step.errorMessage && (
+  1386→          <div className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded p-2">
+  1387→            {step.errorMessage}
+  1388→          </div>
+  1389→        )}
+  1390→      </div>
+  1391→    </div>
+  1392→  );
+  1393→}
+  1394→
+  1395→// ---------- Empty state ----------
+  1396→function EmptyChatState({ providers, onTry }: { providers: Provider[]; onTry: (t: string) => void }) {
+  1397→  const suggestions = [
+  1398→    "Explain how Marq AI failover works",
+  1399→    "Write a Python function that retries with backoff",
+  1400→    "Compare GPT-4o vs Gemini vs Claude for coding",
+  1401→    "What are the trade-offs of multi-provider routing?",
+  1402→  ];
+  1403→  return (
+  1404→    <div className="text-center py-12">
+  1405→      <div className="inline-flex w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 items-center justify-center shadow-xl shadow-emerald-500/20 mb-5">
+  1406→        <Sparkles className="w-8 h-8 text-white" />
+  1407→      </div>
+  1408→      <h2 className="text-2xl font-bold tracking-tight">Welcome to Marq AI</h2>
+  1409→      <p className="text-slate-500 dark:text-slate-400 mt-2 max-w-md mx-auto text-sm">
+  1410→        One unified gateway to{" "}
+  1411→        {providers.map((p, i) => (
+  1412→          <span key={p.id}>
+  1413→            <span style={{ color: p.color }} className="font-medium">{p.displayName}</span>
+  1414→            {i < providers.length - 2 ? ", " : i === providers.length - 2 ? " and " : ""}
+  1415→          </span>
+  1416→        ))}
+  1417→        . Send a message to start — if your primary provider fails, Marq automatically falls over.
+  1418→      </p>
+  1419→
+
+[showing lines 720-1419 of 2213; use offset=1420 with limit to continue reading]

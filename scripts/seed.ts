@@ -1,8 +1,9 @@
 /**
- * Seed Marq AI Aggregator with default providers.
+ * Seed Marq AI Aggregator with default providers + sample agent tasks.
  * Run with: bun run /home/z/my-project/scripts/seed.ts
  */
 import { db } from "../src/lib/db";
+import { AGENT_TEMPLATES } from "../src/lib/agent-templates";
 
 async function main() {
   console.log("Seeding Marq AI Aggregator default providers...");
@@ -75,6 +76,36 @@ async function main() {
       },
     });
     console.log("  ✓ Created welcome session");
+  }
+
+  // Seed one agent task per template (skipping "general" to avoid duplicates
+  // if the user already ran the agent before). These give the Agent tab a
+  // populated history on first load so users can see what each persona does.
+  const existingTasks = await db.agentTask.count();
+  if (existingTasks === 0) {
+    console.log("  Seeding sample agent tasks per template...");
+    const openaiProvider = await db.provider.findUnique({ where: { name: "openai" } });
+    const primaryProviderId = openaiProvider?.id ?? null;
+
+    // Pick the first suggested goal for each template as the seeded task.
+    for (const tpl of AGENT_TEMPLATES) {
+      if (tpl.key === "general") continue; // skip — user will run their own
+      const goal = tpl.suggestedGoals[0];
+      if (!goal) continue;
+      await db.agentTask.create({
+        data: {
+          title: goal.slice(0, 60) + (goal.length > 60 ? "…" : ""),
+          goal,
+          agentType: tpl.key,
+          maxSteps: tpl.defaultMaxSteps,
+          primaryProviderId,
+          // Mark as pending so the user can run it themselves to see the
+          // template in action. (We deliberately don't auto-run on seed.)
+          status: "pending",
+        },
+      });
+      console.log(`    ✓ ${tpl.displayName}: seeded "${goal.slice(0, 50)}…"`);
+    }
   }
 
   console.log("Seed complete.");

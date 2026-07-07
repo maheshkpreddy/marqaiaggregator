@@ -30,12 +30,17 @@ async function getProviderId(name: string): Promise<string | null> {
   return p?.id ?? null;
 }
 
-async function runTask(goal: string, primaryProviderId: string | null): Promise<Task> {
+async function runTask(
+  goal: string,
+  primaryProviderId: string | null,
+  agentType: string = "general",
+): Promise<Task> {
   const res = await fetch("http://localhost:3000/api/agent/tasks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       goal,
+      agentType,
       maxSteps: 4,
       runImmediately: true,
       primaryProviderId: primaryProviderId ?? undefined,
@@ -56,15 +61,16 @@ async function main() {
     process.exit(1);
   }
 
-  const goals = [
-    "What is 2+2? Use the calculator and give the final answer.",
-    "What time is it now? Give the final answer.",
-    "Calculate 15% tip on $87.50. Give the final answer.",
-    "What is 100 * 100? Use the calculator.",
-    "What is the square root of 144? Use the calculator.",
-    "Tell me the current date. Give the final answer.",
-    "Calculate 365 * 24 (hours in a year).",
-    "What is 50 / 4? Use the calculator.",
+  // Mix of agent types — exercise multiple templates and tool whitelists.
+  const goals: Array<{ goal: string; agentType: string }> = [
+    { goal: "What is 2+2? Use the calculator and give the final answer.", agentType: "general" },
+    { goal: "Project MRR for 100 subscribers at $49 ARPU, 5% monthly churn, 6 months.", agentType: "sales" },
+    { goal: "What time is it now? Give the final answer.", agentType: "general" },
+    { goal: "Calculate 15% tip on $87.50. Give the final answer.", agentType: "sales" },
+    { goal: "What is the square root of 144? Use the calculator.", agentType: "general" },
+    { goal: "Run tests on src/lib/failover and report pass/fail.", agentType: "testing" },
+    { goal: "Check the deploy status of marq-api in production.", agentType: "devops" },
+    { goal: "Generate a TypeScript function that debounces an async call. Then summarize what it does.", agentType: "fullstack_dev" },
   ];
 
   let totalTasks = 0;
@@ -75,9 +81,9 @@ async function main() {
   let stepsWithFailover = 0;
 
   for (let i = 0; i < goals.length; i++) {
-    process.stdout.write(`[${i + 1}/${goals.length}] `);
+    process.stdout.write(`[${i + 1}/${goals.length}] (${goals[i].agentType}) `);
     try {
-      const task = await runTask(goals[i], claudeId);
+      const task = await runTask(goals[i].goal, claudeId, goals[i].agentType);
       totalTasks++;
       totalSteps += task.steps.length;
       const taskFailovers = task.failedOverCount;
@@ -89,8 +95,9 @@ async function main() {
       else failedTasks++;
 
       const providers = task.steps.map((s) => s.provider?.displayName ?? "?");
+      const toolsUsed = task.steps.map((s) => s.action ?? "-").join(", ");
       console.log(
-        `${task.status.toUpperCase()} | steps=${task.steps.length} | failovers=${taskFailovers} | providers=${providers.join("→")} | ${(task.totalLatencyMs ?? 0) / 1000}s`,
+        `${task.status.toUpperCase()} | steps=${task.steps.length} | failovers=${taskFailovers} | providers=${providers.join("→")} | tools=${toolsUsed} | ${(task.totalLatencyMs ?? 0) / 1000}s`,
       );
       if (task.finalAnswer) {
         console.log(`          → ${task.finalAnswer.slice(0, 80)}`);

@@ -154,7 +154,356 @@ export const TOOLS: Tool[] = [
       }
     },
   },
+
+  // ─────────────────────────────────────────────────────────────
+  // Domain-specific tools for specialized Marq AI agents
+  // ─────────────────────────────────────────────────────────────
+
+  {
+    name: "generate_code",
+    description:
+      "Generate a code snippet for a specific task. Use this when you need to produce actual code (functions, components, scripts, configs). Specify language and a clear task description. Returns the code in a fenced block plus a one-line explanation.",
+    signature:
+      'generate_code({ "language": "typescript", "task": "what the code should do", "context": "optional context or constraints" })',
+    examples: [
+      'generate_code({ "language": "typescript", "task": "retry with exponential backoff for async fetch" })',
+      'generate_code({ "language": "python", "task": "parse a CSV into list of dicts" })',
+    ],
+    execute: async (input) => {
+      const args = (input ?? {}) as { language?: string; task?: string; context?: string };
+      if (!args.task || typeof args.task !== "string") {
+        return "Error: generate_code requires a 'task' string.";
+      }
+      const language = (args.language ?? "typescript").trim().toLowerCase();
+      const context = (args.context ?? "").trim();
+      try {
+        const ZAI = (await import("z-ai-web-dev-sdk")).default;
+        const zai = await ZAI.create();
+        const completion = await zai.chat.completions.create({
+          messages: [
+            {
+              role: "assistant",
+              content:
+                "You are a senior software engineer. Generate production-quality code that solves the user's task. " +
+                "Return ONLY: a fenced code block in the requested language, followed by a one-line summary of what it does. " +
+                "Do not include any other prose.",
+            },
+            {
+              role: "user",
+              content:
+                `Language: ${language}\nTask: ${args.task}\n` +
+                (context ? `Context / constraints: ${context}\n` : ""),
+            },
+          ],
+          thinking: { type: "disabled" },
+        });
+        return (completion.choices[0]?.message?.content ?? "").trim() || "(no code produced)";
+      } catch (err) {
+        return `generate_code failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  },
+
+  {
+    name: "run_tests",
+    description:
+      "Simulate running a test suite for a given module or file and return a sample test report. Use this when validating that code meets its requirements. Returns pass/fail counts, duration, and any failure messages.",
+    signature:
+      'run_tests({ "module": "<module or file name>", "framework": "jest" })',
+    examples: [
+      'run_tests({ "module": "src/lib/failover", "framework": "jest" })',
+      'run_tests({ "module": "auth/login.ts", "framework": "vitest" })',
+    ],
+    execute: async (input) => {
+      const args = (input ?? {}) as { module?: string; framework?: string };
+      if (!args.module || typeof args.module !== "string") {
+        return "Error: run_tests requires a 'module' string.";
+      }
+      const framework = (args.framework ?? "jest").trim().toLowerCase();
+      // Deterministic simulated report — varies with module name length so
+      // different modules produce different outputs but the same module
+      // always produces the same result (useful for reproducible agent runs).
+      const seed = hashString(args.module);
+      const total = 8 + (seed % 12); // 8..19 tests
+      const failed = seed % 4 === 0 ? 1 + (seed % 3) : 0;
+      const passed = total - failed;
+      const duration = 120 + (seed % 1800); // 120..1920ms
+      const lines: string[] = [
+        `Framework: ${framework}`,
+        `Module:    ${args.module}`,
+        `Result:    ${failed === 0 ? "PASS" : "FAIL"}`,
+        `Tests:     ${passed} passed, ${failed} failed, ${total} total`,
+        `Duration:  ${duration}ms`,
+      ];
+      if (failed > 0) {
+        lines.push("", "Failures:");
+        for (let i = 1; i <= failed; i++) {
+          lines.push(
+            `  ${i}) ${args.module} › should handle edge case #${seed % 7 + i}`,
+            `     AssertionError: expected value to be defined, got undefined`,
+            `     at ${args.module}:${10 + i * 23}:14`,
+          );
+        }
+      }
+      lines.push("", `Coverage: ${70 + (seed % 30)}% statements, ${60 + (seed % 35)}% branches`);
+      return lines.join("\n");
+    },
+  },
+
+  {
+    name: "parse_requirements",
+    description:
+      "Extract structured requirements from a free-text product brief or user story. Returns a numbered list of functional and non-functional requirements. Use this when turning vague stakeholder input into actionable specs.",
+    signature: 'parse_requirements({ "text": "<brief or user story>" })',
+    examples: [
+      'parse_requirements({ "text": "As a user I want to log in with Google so I do not need a new password" })',
+    ],
+    execute: async (input) => {
+      const args = (input ?? {}) as { text?: string };
+      if (!args.text || typeof args.text !== "string") {
+        return "Error: parse_requirements requires a 'text' string.";
+      }
+      try {
+        const ZAI = (await import("z-ai-web-dev-sdk")).default;
+        const zai = await ZAI.create();
+        const completion = await zai.chat.completions.create({
+          messages: [
+            {
+              role: "assistant",
+              content:
+                "You are a senior business analyst. From the user's brief, extract structured requirements as a plain-text numbered list. " +
+                "Use the format:\n" +
+                "Functional:\n  F1. <requirement>\n  ...\n" +
+                "Non-functional:\n  N1. <requirement>\n  ...\n" +
+                "Assumptions:\n  A1. <assumption>\n  ...\n" +
+                "Keep each item to a single sentence. Do not add prose outside these sections.",
+            },
+            { role: "user", content: args.text.slice(0, 6000) },
+          ],
+          thinking: { type: "disabled" },
+        });
+        return (completion.choices[0]?.message?.content ?? "").trim() || "(no requirements extracted)";
+      } catch (err) {
+        return `parse_requirements failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  },
+
+  {
+    name: "calculate_revenue",
+    description:
+      "Project revenue, MRR, ARR, or break-even point from a few inputs. Use this for sales planning, pricing experiments, and SaaS metrics. Returns the computed figures plus a one-line takeaway.",
+    signature:
+      'calculate_revenue({ "subscribers": 100, "arpu": 49, "churn": 0.05, "months": 12 })',
+    examples: [
+      'calculate_revenue({ "subscribers": 100, "arpu": 49, "churn": 0.05, "months": 12 })',
+      'calculate_revenue({ "subscribers": 500, "arpu": 99, "churn": 0.03, "months": 24 })',
+    ],
+    execute: async (input) => {
+      const args = (input ?? {}) as {
+        subscribers?: number;
+        arpu?: number;
+        churn?: number;
+        months?: number;
+      };
+      const subs = Number(args.subscribers);
+      const arpu = Number(args.arpu);
+      const churn = Number(args.churn);
+      const months = Number(args.months) || 12;
+      if (!Number.isFinite(subs) || !Number.isFinite(arpu) || subs < 0 || arpu < 0) {
+        return "Error: calculate_revenue requires 'subscribers' (number) and 'arpu' (number).";
+      }
+      const churnRate = Number.isFinite(churn) && churn >= 0 && churn < 1 ? churn : 0;
+      // Month-by-month compounding churn projection.
+      let currentSubs = subs;
+      let totalRevenue = 0;
+      const monthly: Array<{ month: number; subs: number; mrr: number }> = [];
+      for (let m = 1; m <= months; m++) {
+        const mrr = currentSubs * arpu;
+        totalRevenue += mrr;
+        monthly.push({ month: m, subs: Math.round(currentSubs), mrr: Math.round(mrr) });
+        currentSubs = currentSubs * (1 - churnRate);
+      }
+      const finalMrr = monthly[monthly.length - 1].mrr;
+      const arr = finalMrr * 12;
+      const lines: string[] = [
+        `Revenue projection — ${months} months`,
+        `Starting subscribers: ${subs}`,
+        `ARPU: $${arpu.toFixed(2)}/mo`,
+        `Monthly churn: ${(churnRate * 100).toFixed(2)}%`,
+        "",
+        `Final MRR: $${finalMrr.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
+        `Projected ARR (run-rate): $${arr.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
+        `Total revenue over ${months}mo: $${totalRevenue.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
+        "",
+        "Monthly breakdown:",
+        ...monthly.slice(0, 6).map(
+          (m) => `  M${m.month}: ${m.subs} subs → $${m.mrr.toLocaleString("en-US")}/mo`,
+        ),
+        ...(monthly.length > 6 ? [`  ... (${monthly.length - 6} more months)`] : []),
+        "",
+        `Takeaway: at ${subs} starting subscribers and ${(churnRate * 100).toFixed(1)}% monthly churn, you reach $${finalMrr.toLocaleString("en-US", { maximumFractionDigits: 0 })}/mo MRR in ${months} months.`,
+      ];
+      return lines.join("\n");
+    },
+  },
+
+  {
+    name: "get_deploy_status",
+    description:
+      "Check the simulated deployment status of a Marq AI service or environment. Use this when coordinating releases or diagnosing an outage. Returns service name, environment, status, region, last deploy time, and commit SHA.",
+    signature:
+      'get_deploy_status({ "service": "<service name>", "environment": "production" })',
+    examples: [
+      'get_deploy_status({ "service": "marq-api", "environment": "production" })',
+      'get_deploy_status({ "service": "marq-web", "environment": "staging" })',
+    ],
+    execute: async (input) => {
+      const args = (input ?? {}) as { service?: string; environment?: string };
+      if (!args.service || typeof args.service !== "string") {
+        return "Error: get_deploy_status requires a 'service' string.";
+      }
+      const env = (args.environment ?? "production").trim().toLowerCase();
+      const seed = hashString(`${args.service}|${env}`);
+      const statuses = ["healthy", "healthy", "healthy", "deploying", "degraded", "healthy"];
+      const status = statuses[seed % statuses.length];
+      const regions = ["bom1", "fra1", "iad1", "sfo1"];
+      const region = regions[seed % regions.length];
+      const commitSha = (seed.toString(16) + "0000000").slice(0, 7);
+      const minutesAgo = 5 + (seed % 240);
+      const deployTime = new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+      const lines: string[] = [
+        `Service:     ${args.service}`,
+        `Environment: ${env}`,
+        `Region:      ${region}`,
+        `Status:      ${status.toUpperCase()}`,
+        `Commit:      ${commitSha}`,
+        `Deployed:    ${deployTime} (${minutesAgo} min ago)`,
+        `URL:         https://${env === "production" ? "" : env + "."}${args.service}.marqai.app`,
+      ];
+      if (status === "deploying") {
+        lines.push("", "Build log (tail):", "  ✓ Running checks", "  ✓ Uploading functions", "  → Deploying to edge…");
+      } else if (status === "degraded") {
+        lines.push("", "Active incidents:", "  • P95 latency 2.4s (baseline 380ms) on /api/chat");
+      }
+      return lines.join("\n");
+    },
+  },
+
+  {
+    name: "create_ticket",
+    description:
+      "Create a tracking ticket for a Marq AI task or issue. Use this when an agent identifies work that needs follow-up (bug, feature, ops task). Returns the ticket ID, URL, and a confirmation summary.",
+    signature:
+      'create_ticket({ "title": "<short title>", "description": "<what needs to be done>", "priority": "P2", "assignee": "unassigned" })',
+    examples: [
+      'create_ticket({ "title": "Add OAuth login", "description": "Users should sign in with Google", "priority": "P1" })',
+      'create_ticket({ "title": "Fix flaky test in failover engine", "priority": "P3", "assignee": "mahesh" })',
+    ],
+    execute: async (input) => {
+      const args = (input ?? {}) as {
+        title?: string;
+        description?: string;
+        priority?: string;
+        assignee?: string;
+      };
+      if (!args.title || typeof args.title !== "string") {
+        return "Error: create_ticket requires a 'title' string.";
+      }
+      const priority = (args.priority ?? "P2").toUpperCase();
+      const validPriorities = ["P0", "P1", "P2", "P3", "P4"];
+      if (!validPriorities.includes(priority)) {
+        return `Error: priority must be one of ${validPriorities.join(", ")}.`;
+      }
+      const assignee = (args.assignee ?? "unassigned").trim();
+      // Deterministic ticket ID so the same input always produces the same ticket.
+      const seed = hashString(`${args.title}|${args.description ?? ""}`);
+      const ticketId = `MARQ-${1000 + (seed % 9000)}`;
+      const url = `https://issues.marqai.app/${ticketId}`;
+      const lines: string[] = [
+        `Ticket created:  ${ticketId}`,
+        `Title:           ${args.title}`,
+        `Priority:        ${priority}`,
+        `Assignee:        ${assignee}`,
+        `Status:          open`,
+        `URL:             ${url}`,
+        ``,
+        `Description:`,
+        `  ${(args.description ?? "(no description provided)").slice(0, 400)}`,
+        ``,
+        `Next steps:`,
+        `  • The ticket is now visible in the Marq AI issue tracker.`,
+        `  • The on-call engineer has been notified (P0/P1 only).`,
+        `  • Link this ticket from related PRs using "Refs ${ticketId}".`,
+      ];
+      return lines.join("\n");
+    },
+  },
+
+  {
+    name: "write_runbook",
+    description:
+      "Generate an operational runbook for a specific scenario (incident response, deploy, rollback, on-call). Use this when producing operational documentation for the Marq AI platform.",
+    signature:
+      'write_runbook({ "scenario": "<incident or task>", "service": "<service name>" })',
+    examples: [
+      'write_runbook({ "scenario": "primary provider down — failover not triggering", "service": "marq-api" })',
+      'write_runbook({ "scenario": "database connection pool exhausted", "service": "marq-api" })',
+    ],
+    execute: async (input) => {
+      const args = (input ?? {}) as { scenario?: string; service?: string };
+      if (!args.scenario || typeof args.scenario !== "string") {
+        return "Error: write_runbook requires a 'scenario' string.";
+      }
+      const service = (args.service ?? "marq-api").trim();
+      try {
+        const ZAI = (await import("z-ai-web-dev-sdk")).default;
+        const zai = await ZAI.create();
+        const completion = await zai.chat.completions.create({
+          messages: [
+            {
+              role: "assistant",
+              content:
+                "You are a senior SRE. Write a concise operational runbook for the given scenario. " +
+                "Use this exact structure (plain text, no markdown):\\n" +
+                "RUNBOOK: <scenario>\\n" +
+                "Service: <service>\\n" +
+                "Severity: <SEV-1..SEV-3>\\n" +
+                "\\n" +
+                "1. Detect\\n   - <signal>\\n   - <threshold>\\n" +
+                "2. Triage\\n   - <how to confirm>\\n   - <who to page>\\n" +
+                "3. Mitigate\\n   - <step 1>\\n   - <step 2>\\n" +
+                "4. Resolve\\n   - <step 1>\\n   - <step 2>\\n" +
+                "5. Post-mortem\\n   - <within 48h>\\n" +
+                "\\n" +
+                "Rollback: <one-line rollback command or step>\\n" +
+                "Keep each bullet to one line. Do not include prose outside the structure.",
+            },
+            {
+              role: "user",
+              content: `Scenario: ${args.scenario}\nService: ${service}`,
+            },
+          ],
+          thinking: { type: "disabled" },
+        });
+        return (completion.choices[0]?.message?.content ?? "").trim() || "(no runbook produced)";
+      } catch (err) {
+        return `write_runbook failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  },
 ];
+
+// Tiny stable string hash used by deterministic tools (run_tests, get_deploy_status, create_ticket).
+// Not cryptographic — just needs to be fast and stable across runs.
+function hashString(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
+}
 
 export const TOOL_NAMES = TOOLS.map((t) => t.name);
 
@@ -163,12 +512,29 @@ export function getTool(name: string): Tool | undefined {
 }
 
 /**
- * Build the system-prompt fragment that describes available tools to the LLM.
+ * Get a subset of tools by name. Unknown names are silently skipped.
+ * Used by agent templates to expose only the tools that make sense for a given
+ * persona (e.g. a Sales Agent doesn't need `generate_code`).
  */
-export function toolDescriptionsForPrompt(): string {
-  return TOOLS.map((t) => {
-    return `### ${t.name}\n${t.description}\nSignature: ${t.signature}\nExample: ${t.examples[0]}`;
-  }).join("\n\n");
+export function getToolsByNames(names: string[]): Tool[] {
+  const set = new Set(names);
+  return TOOLS.filter((t) => set.has(t.name));
+}
+
+/**
+ * Build the system-prompt fragment that describes available tools to the LLM.
+ *
+ * @param onlyTools Optional whitelist of tool names. When omitted, all tools
+ *                  are described. When provided, only matching tools are
+ *                  included (unknown names are silently skipped).
+ */
+export function toolDescriptionsForPrompt(onlyTools?: string[]): string {
+  const list = onlyTools ? getToolsByNames(onlyTools) : TOOLS;
+  return list
+    .map((t) => {
+      return `### ${t.name}\n${t.description}\nSignature: ${t.signature}\nExample: ${t.examples[0]}`;
+    })
+    .join("\n\n");
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -58,6 +58,11 @@ import {
   FileText,
   Timer,
   ChevronRight,
+  Code2,
+  FlaskConical,
+  ClipboardList,
+  TrendingUp,
+  Compass,
 } from "lucide-react";
 
 // ---------- Types ----------
@@ -149,7 +154,20 @@ interface AgentTool {
   name: string;
   description: string;
   signature: string;
-  examples: string[];
+  examples?: string[];
+}
+
+interface AgentTemplate {
+  key: string;
+  displayName: string;
+  tagline: string;
+  description: string;
+  icon: string;
+  color: string;
+  category: "engineering" | "business" | "operations" | "general";
+  defaultMaxSteps: number;
+  tools: AgentTool[];
+  suggestedGoals: string[];
 }
 
 interface AgentStep {
@@ -179,6 +197,7 @@ interface AgentTask {
   id: string;
   title: string;
   goal: string;
+  agentType: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   maxSteps: number;
   primaryProviderId: string | null;
@@ -762,8 +781,32 @@ const toolIcons: Record<string, typeof Search> = {
   calculator: Calculator,
   current_time: Timer,
   text_summary: FileText,
+  generate_code: Code2,
+  run_tests: FlaskConical,
+  parse_requirements: ClipboardList,
+  calculate_revenue: TrendingUp,
+  get_deploy_status: Server,
+  create_ticket: FileText,
+  write_runbook: Shield,
   final_answer: CheckCircle2,
 };
+
+const templateIconMap: Record<string, typeof Sparkles> = {
+  Sparkles,
+  Code2,
+  FlaskConical,
+  Server,
+  ClipboardList,
+  TrendingUp,
+  Compass,
+  Search,
+  Brain,
+};
+
+function TemplateIcon({ name, className, style }: { name: string; className?: string; style?: React.CSSProperties }) {
+  const Icon = templateIconMap[name] ?? Sparkles;
+  return <Icon className={className} style={style} />;
+}
 
 const taskStatusMeta: Record<AgentTask["status"], { label: string; color: string; icon: typeof CheckCircle2 }> = {
   pending: { label: "Pending", color: "#6b7280", icon: CircleDot },
@@ -781,8 +824,9 @@ function AgentPanel({
   onProvidersChanged: () => void;
 }) {
   const { toast } = useToast();
+  const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>("general");
   const [tasks, setTasks] = useState<AgentTask[]>([]);
-  const [tools, setTools] = useState<AgentTool[]>([]);
   const [activeTask, setActiveTask] = useState<AgentTaskFull | null>(null);
   const [goal, setGoal] = useState("");
   const [maxSteps, setMaxSteps] = useState(6);
@@ -790,15 +834,32 @@ function AgentPanel({
   const [running, setRunning] = useState(false);
   const [loadingTasks, setLoadingTasks] = useState(true);
 
-  // Load tools list once.
+  const selectedTemplate = templates.find((t) => t.key === selectedTemplateKey) ?? templates[0];
+
+  // Load templates list once.
   useEffect(() => {
-    fetch("/api/agent/tools")
+    fetch("/api/agent/templates")
       .then((r) => r.json())
-      .then((d) => setTools(d.tools ?? []))
+      .then((d) => {
+        const list: AgentTemplate[] = d.templates ?? [];
+        setTemplates(list);
+        if (list.length > 0 && !list.find((t) => t.key === selectedTemplateKey)) {
+          setSelectedTemplateKey(list[0].key);
+        }
+      })
       .catch(() => {});
   }, []);
 
-  // Load tasks list.
+  // When template changes, sync default max steps + clear goal.
+  useEffect(() => {
+    if (selectedTemplate) {
+      setMaxSteps(selectedTemplate.defaultMaxSteps);
+      setGoal("");
+    }
+  }, [selectedTemplateKey, selectedTemplate]);
+
+  // Load tasks list. Always loads ALL tasks (no filter) so the user can
+  // see history across agent types; the UI filters client-side.
   const loadTasks = useCallback(async () => {
     const res = await fetch("/api/agent/tasks");
     const data = await res.json();
@@ -850,6 +911,7 @@ function AgentPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           goal: trimmed,
+          agentType: selectedTemplateKey,
           maxSteps,
           primaryProviderId: primaryProviderId || undefined,
           runImmediately: true,
@@ -867,7 +929,7 @@ function AgentPanel({
         setRunning(false);
         if (data.task.status === "completed") {
           toast({
-            title: "Agent completed",
+            title: `${selectedTemplate?.displayName ?? "Agent"} completed`,
             description: `Used ${data.task.steps.length} step(s) to finish the task.`,
           });
         } else {
@@ -924,12 +986,25 @@ function AgentPanel({
     toast({ title: "Task deleted" });
   };
 
-  const sampleGoals = [
-    "What's the latest AI news this week? Summarize the top 3 stories.",
-    "Calculate the monthly payment on a $250,000 mortgage at 7% over 30 years.",
-    "What time is it now? Then tell me how many hours until midnight.",
-    "Search for the current OpenAI CEO and summarize their background in 2 sentences.",
-  ];
+  // Group templates by category for display.
+  const templatesByCategory: Record<string, AgentTemplate[]> = {};
+  for (const t of templates) {
+    if (!templatesByCategory[t.category]) templatesByCategory[t.category] = [];
+    templatesByCategory[t.category].push(t);
+  }
+  const categoryLabels: Record<string, string> = {
+    engineering: "Engineering",
+    business: "Business",
+    operations: "Operations",
+    general: "General",
+  };
+  const categoryOrder = ["engineering", "business", "operations", "general"];
+
+  // Client-side task filter (show all when "general" is selected, otherwise
+  // show tasks matching the selected template type).
+  const filteredTasks = selectedTemplateKey === "general"
+    ? tasks
+    : tasks.filter((t) => t.agentType === selectedTemplateKey);
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-8">
@@ -937,142 +1012,253 @@ function AgentPanel({
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Brain className="w-6 h-6 text-emerald-600" />
-          Agent
+          Agent Workspace
         </h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Autonomous ReAct agent with tool access. Every step runs through the same failover engine as chat — if one provider fails mid-task, the next takes over.
+          Pick an agent persona — full-stack developer, testing, business analyst, sales, DevOps, and more.
+          Each agent runs the same ReAct loop with the same failover engine as chat: if one provider fails mid-task, the next takes over.
         </p>
       </div>
 
-      {/* Goal Composer */}
-      <Card className="mb-6 border-emerald-200 dark:border-emerald-900">
+      {/* Template Picker */}
+      <Card className="mb-6">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-emerald-600" />
-            New Task
+            Choose an Agent
           </CardTitle>
           <CardDescription className="text-xs">
-            Describe a goal. The agent will reason, call tools, and return a final answer.
+            Each persona has its own system prompt, tool whitelist, and suggested goals.
+            All personas share the same failover engine.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <Textarea
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-            placeholder="e.g. Research the latest OpenAI announcement and write a 3-bullet summary."
-            rows={3}
-            disabled={running}
-            className="resize-none"
-          />
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <Label className="text-xs text-slate-500">Primary provider</Label>
-              <select
-                value={primaryProviderId}
-                onChange={(e) => setPrimaryProviderId(e.target.value)}
-                disabled={running}
-                className="block mt-1 px-3 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-md bg-transparent"
-              >
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>{p.displayName}</option>
-                ))}
-              </select>
+        <CardContent>
+          {templates.length === 0 ? (
+            <div className="text-center text-xs text-slate-500 py-6">
+              <Loader2 className="w-4 h-4 animate-spin mx-auto mb-2" />
+              Loading agent templates…
             </div>
-            <div>
-              <Label className="text-xs text-slate-500">Max steps</Label>
-              <select
-                value={maxSteps}
-                onChange={(e) => setMaxSteps(Number(e.target.value))}
-                disabled={running}
-                className="block mt-1 px-3 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-md bg-transparent"
-              >
-                {[3, 4, 5, 6, 8, 10].map((n) => (
-                  <option key={n} value={n}>{n} steps</option>
+          ) : (
+            <div className="space-y-4">
+              {categoryOrder
+                .filter((cat) => templatesByCategory[cat]?.length)
+                .map((cat) => (
+                  <div key={cat}>
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                      {categoryLabels[cat]}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {templatesByCategory[cat].map((t) => {
+                        const isSelected = t.key === selectedTemplateKey;
+                        return (
+                          <button
+                            key={t.key}
+                            onClick={() => setSelectedTemplateKey(t.key)}
+                            disabled={running}
+                            className={`text-left p-3 rounded-lg border transition-all group disabled:opacity-50 disabled:cursor-not-allowed ${
+                              isSelected
+                                ? "bg-white dark:bg-slate-900 shadow-sm"
+                                : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50"
+                            }`}
+                            style={isSelected ? { borderColor: t.color, boxShadow: `0 0 0 1px ${t.color}` } : undefined}
+                          >
+                            <div className="flex items-start gap-2">
+                              <div
+                                className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                                style={{ backgroundColor: `${t.color}15`, color: t.color }}
+                              >
+                                <TemplateIcon name={t.icon} className="w-4 h-4" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-sm font-semibold truncate" style={isSelected ? { color: t.color } : undefined}>
+                                    {t.displayName}
+                                  </span>
+                                  {isSelected && (
+                                    <CheckCircle2 className="w-3 h-3 flex-shrink-0" style={{ color: t.color }} />
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
+                                  {t.tagline}
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-1.5">
+                                  {t.tools.length} tool{t.tools.length !== 1 ? "s" : ""} • {t.defaultMaxSteps} step max
+                                </div>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ))}
-              </select>
-            </div>
-            <div className="flex-1" />
-            <Button
-              onClick={createAndRun}
-              disabled={!goal.trim() || running}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
-            >
-              {running ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Play className="w-4 h-4 mr-2" />
-              )}
-              {running ? "Running…" : "Run Agent"}
-            </Button>
-          </div>
-
-          {/* Sample goals */}
-          {!running && !goal && (
-            <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100 dark:border-slate-900">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wide w-full mb-1">Try:</span>
-              {sampleGoals.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setGoal(s)}
-                  className="text-xs px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-800 hover:border-emerald-400 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20 transition-all text-left"
-                >
-                  {s}
-                </button>
-              ))}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Goal Composer (driven by selected template) */}
+      {selectedTemplate && (
+        <Card className="mb-6" style={{ borderColor: `${selectedTemplate.color}40` }}>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <TemplateIcon name={selectedTemplate.icon} className="w-4 h-4" style={{ color: selectedTemplate.color }} />
+              <span style={{ color: selectedTemplate.color }}>{selectedTemplate.displayName}</span>
+              <span className="text-slate-400 font-normal text-xs">— New Task</span>
+            </CardTitle>
+            <CardDescription className="text-xs">
+              {selectedTemplate.description}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Textarea
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              placeholder={`Describe a task for the ${selectedTemplate.displayName}…`}
+              rows={3}
+              disabled={running}
+              className="resize-none"
+            />
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <Label className="text-xs text-slate-500">Primary provider</Label>
+                <select
+                  value={primaryProviderId}
+                  onChange={(e) => setPrimaryProviderId(e.target.value)}
+                  disabled={running}
+                  className="block mt-1 px-3 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-md bg-transparent"
+                >
+                  {providers.map((p) => (
+                    <option key={p.id} value={p.id}>{p.displayName}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs text-slate-500">Max steps</Label>
+                <select
+                  value={maxSteps}
+                  onChange={(e) => setMaxSteps(Number(e.target.value))}
+                  disabled={running}
+                  className="block mt-1 px-3 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-md bg-transparent"
+                >
+                  {[3, 4, 5, 6, 8, 10, 12].map((n) => (
+                    <option key={n} value={n}>{n} steps</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1" />
+              <Button
+                onClick={createAndRun}
+                disabled={!goal.trim() || running}
+                className="text-white"
+                style={{ backgroundColor: selectedTemplate.color, borderColor: selectedTemplate.color }}
+              >
+                {running ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4 mr-2" />
+                )}
+                {running ? "Running…" : `Run ${selectedTemplate.displayName}`}
+              </Button>
+            </div>
+
+            {/* Suggested goals for this template */}
+            {!running && !goal && selectedTemplate.suggestedGoals.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-3 border-t border-slate-100 dark:border-slate-900">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wide w-full mb-1">
+                  Suggested for {selectedTemplate.displayName}:
+                </span>
+                {selectedTemplate.suggestedGoals.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setGoal(s)}
+                    className="text-xs px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 transition-all text-left"
+                    style={{ borderColor: `${selectedTemplate.color}30` }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Task list */}
         <div className="lg:col-span-1 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-              Recent Tasks ({tasks.length})
+              {selectedTemplateKey === "general"
+                ? `All Tasks (${filteredTasks.length})`
+                : `${selectedTemplate?.displayName} Tasks (${filteredTasks.length})`}
             </h2>
             <Button variant="ghost" size="sm" onClick={loadTasks} disabled={loadingTasks}>
               <RefreshCw className={`w-3.5 h-3.5 ${loadingTasks ? "animate-spin" : ""}`} />
             </Button>
           </div>
 
-          {tasks.length === 0 && !loadingTasks && (
+          {filteredTasks.length === 0 && !loadingTasks && (
             <Card>
               <CardContent className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
-                No agent tasks yet. Submit a goal above to begin.
+                {selectedTemplateKey === "general"
+                  ? "No agent tasks yet. Pick a persona above and submit a goal to begin."
+                  : `No ${selectedTemplate?.displayName} tasks yet. Submit a goal above to begin.`}
               </CardContent>
             </Card>
           )}
 
-          {tasks.map((t) => {
+          {filteredTasks.map((t) => {
             const Status = taskStatusMeta[t.status].icon;
             const isActive = activeTask?.id === t.id;
+            // Find the template for this task so we can show its color/icon.
+            const taskTemplate = templates.find((tpl) => tpl.key === t.agentType);
+            const tplColor = taskTemplate?.color ?? "#64748b";
+            const tplIcon = taskTemplate?.icon ?? "Sparkles";
             return (
               <button
                 key={t.id}
                 onClick={() => loadTask(t.id)}
                 className={`w-full text-left p-3 rounded-lg border transition-all group ${
                   isActive
-                    ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20"
+                    ? "bg-white dark:bg-slate-900 shadow-sm"
                     : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900"
                 }`}
+                style={isActive ? { borderColor: tplColor, boxShadow: `0 0 0 1px ${tplColor}40` } : undefined}
               >
                 <div className="flex items-start gap-2">
-                  <Status
-                    className={`w-4 h-4 mt-0.5 flex-shrink-0 ${t.status === "running" ? "animate-spin" : ""}`}
-                    style={{ color: taskStatusMeta[t.status].color }}
-                  />
+                  <div
+                    className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: `${tplColor}15`, color: tplColor }}
+                  >
+                    <TemplateIcon name={tplIcon} className="w-3.5 h-3.5" />
+                  </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">{t.title}</div>
-                    <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      {t.stepCount} step{t.stepCount !== 1 ? "s" : ""}
+                    <div className="flex items-center gap-1.5">
+                      <Status
+                        className={`w-3 h-3 flex-shrink-0 ${t.status === "running" ? "animate-spin" : ""}`}
+                        style={{ color: taskStatusMeta[t.status].color }}
+                      />
+                      <span className="text-sm font-medium truncate flex-1">{t.title}</span>
+                    </div>
+                    <div className="text-[10px] mt-0.5 flex items-center gap-1 flex-wrap">
+                      <span
+                        className="px-1.5 py-0 rounded font-medium"
+                        style={{ backgroundColor: `${tplColor}15`, color: tplColor }}
+                      >
+                        {taskTemplate?.displayName ?? t.agentType}
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400">
+                        {t.stepCount} step{t.stepCount !== 1 ? "s" : ""}
+                      </span>
                       {t.failedOverCount > 0 && (
-                        <span className="text-amber-600 dark:text-amber-400 ml-1">
-                          • {t.failedOverCount} failover{t.failedOverCount !== 1 ? "s" : ""}
+                        <span className="text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
+                          <Zap className="w-2.5 h-2.5" />
+                          {t.failedOverCount}
                         </span>
                       )}
                       {t.totalLatencyMs != null && (
-                        <span className="ml-1">• {(t.totalLatencyMs / 1000).toFixed(1)}s</span>
+                        <span className="text-slate-400">• {(t.totalLatencyMs / 1000).toFixed(1)}s</span>
                       )}
                     </div>
                   </div>
@@ -1100,6 +1286,7 @@ function AgentPanel({
               running={running}
               onRerun={() => rerunTask(activeTask.id)}
               providers={providers}
+              templates={templates}
             />
           ) : (
             <Card className="h-full">
@@ -1107,7 +1294,7 @@ function AgentPanel({
                 <Brain className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-700 mb-3" />
                 <h3 className="font-semibold text-slate-600 dark:text-slate-400">No task selected</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
-                  Submit a goal above to start a new task, or click a recent task on the left to view its steps.
+                  Pick an agent persona above, then submit a goal to start a new task — or click a recent task on the left to view its execution trace.
                 </p>
               </CardContent>
             </Card>
@@ -1115,42 +1302,47 @@ function AgentPanel({
         </div>
       </div>
 
-      {/* Tools reference */}
-      <Card className="mt-6">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Wrench className="w-4 h-4 text-slate-500" />
-            Available Tools
-          </CardTitle>
-          <CardDescription className="text-xs">
-            The agent can call any of these tools. Each tool is a pure function — it returns a string observation that goes back into the agent's scratchpad.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {tools.map((t) => {
-              const Icon = toolIcons[t.name] ?? Wrench;
-              return (
-                <div
-                  key={t.name}
-                  className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50"
-                >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <Icon className="w-4 h-4 text-emerald-600" />
-                    <code className="text-xs font-mono font-semibold">{t.name}</code>
+      {/* Tools reference (filtered by selected template) */}
+      {selectedTemplate && (
+        <Card className="mt-6">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Wrench className="w-4 h-4 text-slate-500" />
+              Tools available to {selectedTemplate.displayName}
+              <Badge variant="outline" className="text-[10px] py-0 h-4 ml-1">
+                {selectedTemplate.tools.length}
+              </Badge>
+            </CardTitle>
+            <CardDescription className="text-xs">
+              This persona can call any of these tools. Each tool is a pure function — it returns a string observation that goes back into the agent's scratchpad.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {selectedTemplate.tools.map((t) => {
+                const Icon = toolIcons[t.name] ?? Wrench;
+                return (
+                  <div
+                    key={t.name}
+                    className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Icon className="w-4 h-4" style={{ color: selectedTemplate.color }} />
+                      <code className="text-xs font-mono font-semibold">{t.name}</code>
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                      {t.description}
+                    </p>
+                    <div className="mt-2 text-[10px] font-mono text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-950 px-2 py-1 rounded border border-slate-100 dark:border-slate-900 break-all">
+                      {t.signature}
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                    {t.description}
-                  </p>
-                  <div className="mt-2 text-[10px] font-mono text-slate-500 dark:text-slate-500 bg-white dark:bg-slate-950 px-2 py-1 rounded border border-slate-100 dark:border-slate-900">
-                    {t.signature}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
@@ -1160,22 +1352,34 @@ function AgentTaskDetail({
   running,
   onRerun,
   providers,
+  templates,
 }: {
   task: AgentTaskFull;
   running: boolean;
   onRerun: () => void;
   providers: Provider[];
+  templates: AgentTemplate[];
 }) {
   const Status = taskStatusMeta[task.status].icon;
   const totalSteps = task.steps.length;
   const isRunning = task.status === "running" || running;
+  const taskTemplate = templates.find((t) => t.key === task.agentType);
+  const tplColor = taskTemplate?.color ?? "#64748b";
+  const tplIcon = taskTemplate?.icon ?? "Sparkles";
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <div
+                className="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold"
+                style={{ backgroundColor: `${tplColor}15`, color: tplColor }}
+              >
+                <TemplateIcon name={tplIcon} className="w-3 h-3" />
+                {taskTemplate?.displayName ?? task.agentType}
+              </div>
               <Status
                 className={`w-4 h-4 ${task.status === "running" ? "animate-spin" : ""}`}
                 style={{ color: taskStatusMeta[task.status].color }}
@@ -1240,19 +1444,28 @@ function AgentTaskDetail({
           {isRunning && (
             <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 p-3">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Agent is reasoning…</span>
+              <span>{taskTemplate?.displayName ?? "Agent"} is reasoning…</span>
             </div>
           )}
         </div>
 
         {/* Final answer */}
         {task.finalAnswer && (
-          <div className="p-4 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
-            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-400 mb-2 font-semibold">
+          <div
+            className="p-4 rounded-lg border"
+            style={{
+              backgroundColor: `${tplColor}10`,
+              borderColor: `${tplColor}40`,
+            }}
+          >
+            <div
+              className="flex items-center gap-2 text-xs uppercase tracking-wide mb-2 font-semibold"
+              style={{ color: tplColor }}
+            >
               <CheckCircle2 className="w-3.5 h-3.5" />
               Final Answer
             </div>
-            <div className="text-sm leading-relaxed whitespace-pre-wrap text-emerald-900 dark:text-emerald-100">
+            <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: `${tplColor}` }}>
               {task.finalAnswer}
             </div>
           </div>

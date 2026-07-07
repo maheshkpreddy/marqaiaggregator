@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { runAgentTask } from "@/lib/agent";
+import { TEMPLATE_KEYS, TEMPLATE_MAP } from "@/lib/agent-templates";
 
 /**
  * GET /api/agent/tasks
- * List all agent tasks, newest first. Optional `?status=running` filter.
+ * List all agent tasks, newest first.
+ * Optional query params:
+ *   ?status=running          — filter by status
+ *   ?agentType=fullstack_dev — filter by agent type
  */
 export async function GET(req: NextRequest) {
   const status = req.nextUrl.searchParams.get("status");
+  const agentType = req.nextUrl.searchParams.get("agentType");
   const tasks = await db.agentTask.findMany({
-    where: status ? { status } : undefined,
+    where: {
+      ...(status ? { status } : {}),
+      ...(agentType ? { agentType } : {}),
+    },
     orderBy: { createdAt: "desc" },
     take: 100,
     include: {
@@ -25,6 +33,7 @@ export async function GET(req: NextRequest) {
     id: t.id,
     title: t.title,
     goal: t.goal,
+    agentType: t.agentType,
     status: t.status,
     maxSteps: t.maxSteps,
     primaryProviderId: t.primaryProviderId,
@@ -49,7 +58,8 @@ export async function GET(req: NextRequest) {
  * Body:
  *   goal: string                  — the user's task
  *   title?: string                — optional title (defaults to truncated goal)
- *   maxSteps?: number             — optional step cap (default 8, max 15)
+ *   agentType?: string            — template key (default "general"). Must be one of TEMPLATE_KEYS.
+ *   maxSteps?: number             — optional step cap (default from template, max 15)
  *   primaryProviderId?: string    — optional pinned primary provider
  *   runImmediately?: boolean      — default true. If false, only creates the task.
  *
@@ -58,19 +68,31 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { goal, title, maxSteps, primaryProviderId, runImmediately = true } = body ?? {};
+  const { goal, title, agentType, maxSteps, primaryProviderId, runImmediately = true } = body ?? {};
 
   if (!goal || typeof goal !== "string") {
     return NextResponse.json({ error: "goal is required" }, { status: 400 });
   }
 
-  const stepCap = Math.min(Math.max(Number(maxSteps) || 8, 1), 15);
+  // Validate agentType — fall back to "general" if missing/invalid.
+  const typeKey = (typeof agentType === "string" && TEMPLATE_KEYS.includes(agentType))
+    ? agentType
+    : "general";
+  const template = TEMPLATE_MAP[typeKey];
+
+  // Default step cap comes from the template, can be overridden.
+  const requestedSteps = Number(maxSteps);
+  const stepCap = Number.isFinite(requestedSteps) && requestedSteps > 0
+    ? Math.min(Math.max(requestedSteps, 1), 15)
+    : template.defaultMaxSteps;
+
   const taskTitle = title?.trim() || goal.slice(0, 60) + (goal.length > 60 ? "…" : "");
 
   const task = await db.agentTask.create({
     data: {
       title: taskTitle,
       goal,
+      agentType: typeKey,
       maxSteps: stepCap,
       primaryProviderId: primaryProviderId || null,
       status: runImmediately ? "running" : "pending",

@@ -103,6 +103,7 @@ model AgentTask {
   id                String   @id @default(cuid())
   title             String
   goal              String
+  agentType         String   @default("general") // key from src/lib/agent-templates.ts
   status            String   @default("pending") // pending | running | completed | failed | cancelled
   maxSteps          Int      @default(8)
   primaryProviderId String?
@@ -118,6 +119,7 @@ model AgentTask {
 
   @@index([createdAt])
   @@index([status])
+  @@index([agentType])
 }
 
 model AgentStep {
