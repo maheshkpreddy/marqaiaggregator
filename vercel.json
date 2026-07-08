@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "bash ./vercel-build.sh",
-  "installCommand": "bun install",
+  "installCommand": "npm install --legacy-peer-deps",
   "regions": ["bom1"],
   "env": {
     "NEXT_PUBLIC_APP_NAME": "Marq AI Aggregator"
