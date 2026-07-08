@@ -5,6 +5,7 @@
  *
  * Run with: bun run /home/z/my-project/scripts/stress-agent.ts
  */
+export {};
 
 interface Step {
   stepNumber: number;

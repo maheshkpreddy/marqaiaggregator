@@ -690,7 +690,7 @@ export default function Home() {
                         message={m}
                         sending={sending && m.id.startsWith("placeholder-")}
                         originalProviderId={
-                          m.failedOver ? m.originalProviderId : undefined
+                          m.failedOver ? (m.originalProviderId ?? undefined) : undefined
                         }
                         providers={providers}
                       />

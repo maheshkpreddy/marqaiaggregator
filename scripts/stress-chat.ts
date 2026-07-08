@@ -3,6 +3,7 @@
  * and report how many triggered failover. Run with:
  *   bun run /home/z/my-project/scripts/stress-chat.ts
  */
+export {};
 
 const SESSION_ID = process.argv[2] || undefined;
 

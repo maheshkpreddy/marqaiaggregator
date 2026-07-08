@@ -8,6 +8,7 @@
  */
 
 import type { Provider } from "@prisma/client";
+export type { Provider };
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
