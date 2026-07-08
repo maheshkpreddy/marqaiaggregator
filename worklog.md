@@ -49,3 +49,30 @@ Stage Summary:
 - All 8 templates visible and selectable in the UI; task list, task detail, and tools reference all adapt to the selected template.
 - Schema migration applied to local SQLite; Postgres schema updated in lockstep for Vercel.
 - Build green, lint green, ready to push to GitHub + Vercel.
+
+---
+Task ID: deploy-push
+Agent: main (super-z)
+Task: Final pre-deploy TS cleanup + push marqaiaggregator to GitHub (maheshkpreddy/marqaiaggregator) using user-provided PAT, ahead of Vercel auto-deploy.
+
+Work Log:
+- Ran `npx tsc --noEmit` and found 2 real errors in app source + 2 duplicate-function errors in stress scripts.
+- Fix 1: `src/lib/providers.ts` — added `export type { Provider }` re-export so `src/lib/failover.ts` can import the Prisma `Provider` type via `@/lib/providers`.
+- Fix 2: `src/app/page.tsx` line 692 — coalesced `m.originalProviderId ?? undefined` so `string | null` becomes `string | undefined` for the `MessageBubble` prop.
+- Fix 3: `tsconfig.json` — excluded `examples/`, `skills/`, `mini-services/`, `tool-results/`, `upload/` (not part of the Marq app; were pulling in unrelated TS errors from skill SDK examples).
+- Fix 4: Added `export {}` to `scripts/stress-chat.ts` and `scripts/stress-agent.ts` so each is treated as its own module (resolves duplicate `main()` function error when both compiled together).
+- Verified `npx tsc --noEmit` is now fully clean (0 errors).
+- Verified `npx next build` succeeds — 14 routes compiled including `/api/agent/tasks`, `/api/agent/tasks/[id]`, `/api/agent/templates`, `/api/agent/tools`.
+- Committed as `7ee75f2 fix: resolve TS errors before Vercel deploy`.
+- Pushed to `https://github.com/maheshkpreddy/marqaiaggregator.git` main branch using user-supplied PAT via one-time push URL (PAT NOT stored in `remote.origin.url` — verified clean after push).
+- Remote `main` is now at `7ee75f2` (in sync with local).
+
+Stage Summary:
+- Marq AI Aggregator is live on GitHub: https://github.com/maheshkpreddy/marqaiaggregator
+- All 5 tabs (Chat, Providers, Health, Failover Log, Agents) + 14 API routes compile and build cleanly.
+- Agent module ships with 8 role-based templates (Full-Stack Developer, Testing/QA, Business Analyst, Sales, Product Manager, DevOps/SRE, Research Analyst, General Assistant), ReAct loop, tool registry, and per-step failover.
+- Vercel auto-deploy will trigger on push IF the Vercel project is already connected to the repo. User still needs to:
+  1. Set `DATABASE_URL` (postgres://) in Vercel → Settings → Environment Variables
+  2. Set Build Command to `bash ./vercel-build.sh` in Vercel → Settings → Build & Development Settings
+  3. (Optional) Set `ZAI_API_KEY` for demo-mode fallback
+- SECURITY: User shared GitHub PAT in plaintext in chat. They should rotate it at https://github.com/settings/tokens after Vercel connection is confirmed.
