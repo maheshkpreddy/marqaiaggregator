@@ -150,3 +150,46 @@ Stage Summary:
 - All future git pushes to main will auto-deploy on Vercel (GitHub integration is active).
 - SECURITY: User's Vercel token (vcp_...) was shared in plaintext chat. Should be revoked at https://vercel.com/account/tokens after this work.
 - Same applies to the GitHub PAT (ghp_...) shared earlier.
+
+---
+Task ID: saas-build
+Agent: main (super-z)
+Task: Add multi-tenant SaaS layer (RBAC, auth, unified external API) + missing aggregator features (comparison, prompts, files) + complete documentation (Functionality, Technical, Developer, User SOPs) in both the tool and the GitHub Wiki.
+
+Work Log:
+- Added 8 new Prisma models to both schema.prisma + schema.postgres.prisma: Organization, User, Membership, AuthSession, ApiKey, Prompt, FileUpload, ComparisonRun. Added optional orgId to ChatSession, AgentTask, FailoverLog for tenant isolation.
+- Created src/lib/auth.ts (~300 lines): scrypt password hashing, opaque session tokens (30d TTL, httpOnly cookie), RBAC helpers (requireAuth, requireRole, hasMinRole), API key generation/SHA-256 hashing, authApiKey() for /v1/* routes, slugify helper.
+- Auth API routes: /api/auth/{signup,login,logout,me,switch-org}.
+- Org API routes: /api/org (GET org info, PATCH rename), /api/org/members (POST invite, PATCH role, DELETE remove). Enforces seat limits, owner protection, admin-grant-requires-owner rules.
+- API key routes: /api/api-keys (GET list, POST create with one-time full token), /api/api-keys/[id] (DELETE revoke).
+- Prompt library routes: /api/prompts (GET search/filter, POST create), /api/prompts/[id] (PATCH edit, DELETE).
+- File upload routes: /api/files (GET list, POST multipart upload 25MB cap), /api/files/[id] (GET download, DELETE).
+- Comparison route: /api/compare (POST runs same prompt across N providers in parallel, no failover, persists ComparisonRun).
+- Unified external API (OpenAI-compatible): /api/v1/chat/completions (Bearer auth, returns OpenAI shape + marq extension with failover details), /api/v1/compare, /api/v1/agents/run (synchronous agent task), /api/v1/models.
+- Re-scoped ALL existing routes by orgId + RBAC: /api/chat, /api/sessions, /api/sessions/[id], /api/sessions/[id]/messages, /api/failovers, /api/providers, /api/providers/[id], /api/agent/tasks, /api/agent/tasks/[id]. Added legacy fallback (unscoped) for the local stress-test scripts.
+- Created 5 new React components: auth-screen (login/signup), org-panel (team management), api-keys-panel (key CRUD + quick-start code sample), compare-panel (multi-model parallel comparison UI), prompts-panel (library CRUD with search).
+- Modified src/app/page.tsx (~300 lines of changes): added auth gate (checks /api/auth/me on mount, shows AuthScreen if no session), org switcher in header, logout button, 4 new tabs (Compare, Prompts, Team, API Keys). Total tabs now 9.
+- Updated scripts/seed.ts to create a demo org (Marq Demo) + demo user (demo@marq.ai / marq-demo-123) so fresh Vercel deploys are immediately usable.
+- Wrote 4 complete documentation files (~62KB total):
+  - docs/01-Functionality.md (14KB) — product view: roles, modules, security, roadmap
+  - docs/02-Technical.md (20KB) — architecture diagram, schema, failover/agent engines, deployment, performance
+  - docs/03-Developer.md (13KB) — quick start, env vars, patterns for adding routes/tabs/agents/tools, unified API integrator guide (curl/Python/Node examples)
+  - docs/04-User-SOPs.md (15KB) — 12 step-by-step procedures + FAQ
+- Created wiki/ directory with same 4 docs + Home.md index for GitHub Wiki.
+- Verified locally: npx tsc --noEmit clean (0 errors), VERCEL=1 npx next build succeeds with 30 routes (up from 14 in v1).
+- Smoke tested locally: signup, login, /api/auth/me, API key creation, all working.
+- Committed as 53b35a4 feat(saas): multi-tenant RBAC + unified external API + comparison + prompts + docs.
+- Pushed to GitHub main: a86c26c..53b35a4.
+- Pushed 5 wiki pages to https://github.com/maheshkpreddy/marqaiaggregator/wiki (Home, Functionality, Technical, Developer, User-SOPs).
+- Attempted to trigger Vercel production deploy via REST API — failed (token invalid). However, the Vercel project has GitHub auto-deploy enabled, so the git push should trigger a build automatically. User should check the Vercel dashboard.
+
+Stage Summary:
+- ✅ Marq AI Aggregator v2.0 (SaaS) is built, committed, and pushed to GitHub.
+- ✅ Documentation is live in both /docs (in-repo) and the GitHub Wiki.
+- ⚠️ Vercel production deploy status: cannot verify via API (token expired). User needs to either:
+  1. Provide a fresh Vercel token so I can trigger + smoke-test the deploy, OR
+  2. Check the Vercel dashboard at https://vercel.com/maheshkpreddy-6511/marqaiaggregator — the auto-deploy from the git push should already be building or done.
+- Once Vercel is live, the demo login (demo@marq.ai / marq-demo-123) will work immediately. New users can sign up via the AuthScreen.
+- SECURITY: Both the GitHub PAT and Vercel token shared earlier in chat have been used. They should both be rotated:
+  - GitHub PAT: https://github.com/settings/tokens
+  - Vercel token: https://vercel.com/account/tokens
