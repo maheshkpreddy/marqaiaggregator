@@ -106,3 +106,47 @@ Stage Summary:
 - Vercel build is now Vercel-native: respects `process.env.VERCEL`, no Docker-only `cp` commands, uses `npx`, fails gracefully on transient DB issues.
 - If Vercel still fails after this push, the new logging will show exactly which step failed (the script now prints node version, env state, and per-step success/✗ markers).
 - User should check the new Vercel build logs and share any remaining error if the build still fails.
+
+---
+Task ID: vercel-api-fix
+Agent: main (super-z)
+Task: User shared Vercel token; fix Vercel build configuration directly via Vercel REST API (project settings, env vars, trigger deploy).
+
+Work Log:
+- Verified token via GET /v2/user → maheshkpreddy@gmail.com (username: maheshkpreddy-6511).
+- Listed projects → found marqaiaggregator (id=prj_f4nBdUS10Ms67JtURy3ApHYIWTbe, framework=null, repo=marqaiaggregator).
+- Found 2 ERROR deployments in history (from earlier commits 7ee75f2 and a86c26c).
+- Fetched build log of the most recent failed deployment (dpl_G1vSdi8WjiEicKhHLKWNtBT8Zbcx) via GET /v2/deployments/{id}/events. Confirmed the exact failure:
+  ```
+  Running "bash ./vercel-build.sh"
+  Marq AI Aggregator — Vercel build
+  Node: v24.15.0    npm: 11.12.1
+  VERCEL=1  VERCEL_ENV=production
+  ❌ DATABASE_URL env var is not set.
+  Error: Command "bash ./vercel-build.sh" exited with 1
+  ```
+  → Root cause: env vars not set on the project (Neon store existed but wasn't linked to marqaiaggregator).
+- Found 2 existing Neon Postgres stores on user's account: `neon-sky-castle` (store_CMOWWfDcdg4ll3C2) and `neon-bole-xylophone` (store_cbFnHfgyZ7pdYiPK). Both were integration-type and were already connected to OTHER projects (my-project, ai-hrms).
+- Discovered via GET /v1/storage/stores/{id}/connections that `neon-sky-castle` was ALREADY linked to marqaiaggregator (connection id spc_kL2LhqDedrROAifO) — but env vars weren't yet injected at build time of the previous deploys (link happened after).
+- Verified env vars are now present: 18 vars including DATABASE_URL, POSTGRES_URL, PGHOST, PGUSER, PGPASSWORD, NEON_PROJECT_ID etc. (all encrypted type, targets=production,preview).
+- Patched project via PATCH /v9/projects/{id}:
+  - framework: null → "nextjs"
+  - buildCommand: null → "bash ./vercel-build.sh"
+  - installCommand: null → "bun install"
+- Triggered production deploy via POST /v13/deployments with gitSource ref=a86c26ca (latest main). Deployment id: dpl_Hgx6Mkb6yPaxff4sgmAPp5zG8qWn. source must be "cli" (not "api").
+- Polled deployment status: INITIALIZING → BUILDING → READY (~60s total).
+- Smoke-tested production:
+  - GET https://marqaiaggregator.vercel.app → HTTP 200, prerendered
+  - GET /api/providers → 3 providers (OpenAI p0, Gemini p1, Claude p2)
+  - GET /api/agent/templates → 8 agent templates (general, fullstack_dev, testing, devops, business_analyst, sales, product_manager, research)
+  - GET /api/agent/tools → 11 tools (web_search, calculator, current_time, text_summary, generate_code, run_tests, parse_requirements, calculate_revenue, get_deploy_status, create_ticket, write_runbook)
+  - GET /api/failovers → empty list (fresh DB, expected)
+
+Stage Summary:
+- ✅ Marq AI Aggregator is LIVE in production: https://marqaiaggregator.vercel.app
+- Production alias: https://marqaiaggregator.vercel.app (and marqaiaggregator-maheshkpreddy-6511s-projects.vercel.app)
+- Vercel inspector: https://vercel.com/maheshkpreddy-6511/marqaiaggregator/dpl_Hgx6Mkb6yPaxff4sgmAPp5zG8qWn
+- Database (Neon Postgres neon-sky-castle) is linked, all 18 env vars injected, all tables seeded (3 providers, 0 chat sessions, 0 failovers initially, agent templates seeded via /api/agent/templates returning 8).
+- All future git pushes to main will auto-deploy on Vercel (GitHub integration is active).
+- SECURITY: User's Vercel token (vcp_...) was shared in plaintext chat. Should be revoked at https://vercel.com/account/tokens after this work.
+- Same applies to the GitHub PAT (ghp_...) shared earlier.
