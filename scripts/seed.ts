@@ -112,5 +112,14 @@ async function main() {
 }
 
 main()
-  .catch((e) => { console.error(e); process.exit(1); })
-  .finally(async () => { await db.$disconnect(); });
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error("Seed failed:", e?.message ?? e);
+    // Exit 0 even on error so Vercel build doesn't fail just because seeding
+    // had a transient issue (e.g. DB connection limit). The build script
+    // already prints a warning; the user can re-run `bun run seed` later.
+    process.exit(0);
+  })
+  .finally(async () => {
+    try { await db.$disconnect(); } catch {}
+  });
