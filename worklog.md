@@ -76,3 +76,33 @@ Stage Summary:
   2. Set Build Command to `bash ./vercel-build.sh` in Vercel → Settings → Build & Development Settings
   3. (Optional) Set `ZAI_API_KEY` for demo-mode fallback
 - SECURITY: User shared GitHub PAT in plaintext in chat. They should rotate it at https://github.com/settings/tokens after Vercel connection is confirmed.
+
+---
+Task ID: vercel-build-fix
+Agent: main (super-z)
+Task: Fix Vercel build failure ("Command bash ./vercel-build.sh exited with 1") — diagnose and push corrected build config.
+
+Work Log:
+- Identified 4 root causes:
+  1. `bun run build` script chained `next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/` — the `cp` commands are Docker-only and fail on Vercel's builder which uses its own output tracing.
+  2. `output: 'standalone'` in `next.config.ts` conflicts with Vercel's native Next.js output handling.
+  3. `bunx` is less reliable than `npx` for Prisma binaries on Vercel's build image.
+  4. `scripts/seed.ts` catch block called `process.exit(1)` — could fail the whole build on transient DB issues (connection limit, etc.).
+- Fix 1 (`next.config.ts`): gate `output: 'standalone'` on `!process.env.VERCEL` so it only applies for local/Docker prod, not Vercel.
+- Fix 2 (`package.json`): added `build:vercel` script (`next build` only, no cp commands) and `postdeploy` script alias for `bun run seed`.
+- Fix 3 (`vercel-build.sh`): full rewrite:
+  - Runner detection: prefer `npx`, fall back to `bunx`.
+  - Call `npx next build` directly instead of `bun run build` (skips Docker-only cp commands).
+  - Added bash `trap` to restore SQLite schema on script exit (even on failure).
+  - Made `prisma generate` and `next build` hard-fail (exit 1); `prisma db push` and `seed` soft-fail (warn + continue).
+  - Log `node -v`, `npm -v`, `VERCEL`, `VERCEL_ENV` at start for diagnostics.
+- Fix 4 (`scripts/seed.ts`): catch block now exits 0 so transient DB issues don't fail the build; user can re-run `bun run seed` later.
+- Verified locally: `npx tsc --noEmit` clean; `VERCEL=1 npx next build` succeeds with all 14 routes; schema swap + `prisma generate` works.
+- Committed as `a86c26c fix(vercel): make build script Vercel-native (no standalone cp)`.
+- Pushed to `https://github.com/maheshkpreddy/marqaiaggregator.git` main (now at `a86c26c`).
+- Vercel should auto-redeploy on this push if the project is connected.
+
+Stage Summary:
+- Vercel build is now Vercel-native: respects `process.env.VERCEL`, no Docker-only `cp` commands, uses `npx`, fails gracefully on transient DB issues.
+- If Vercel still fails after this push, the new logging will show exactly which step failed (the script now prints node version, env state, and per-step success/✗ markers).
+- User should check the new Vercel build logs and share any remaining error if the build still fails.
