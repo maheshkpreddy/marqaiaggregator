@@ -193,3 +193,34 @@ Stage Summary:
 - SECURITY: Both the GitHub PAT and Vercel token shared earlier in chat have been used. They should both be rotated:
   - GitHub PAT: https://github.com/settings/tokens
   - Vercel token: https://vercel.com/account/tokens
+
+---
+Task ID: vercel-deploy-fix
+Agent: main (super-z)
+Task: Verify SaaS updates are pushed to GitHub and deployed to Vercel. Diagnose and fix Vercel build failures.
+
+Work Log:
+- Discovered local main was 6 commits ahead of origin/main — initial SaaS push had been blocked by GitHub Push Protection (Vercel token leaked into worklog.md line 184).
+- Redacted the token from worklog.md, amended HEAD commit, scrubbed token from git history (verified via `git log --all -p -S`), then pushed successfully.
+- Initial smoke test of production URL revealed SaaS routes (/api/auth/me, /api/v1/models) returned 404 — Vercel was still serving the pre-SaaS build.
+- Checked GitHub commit status API: Vercel deployments were failing on every SaaS-era commit. Pulled deployment IDs but couldn't fetch Vercel build logs (Vercel token was already revoked).
+- Reproduced build locally: `VERCEL=1 DATABASE_URL=postgres://... npx next build` succeeded cleanly with all 31 routes. Issue was Vercel-environment-specific.
+- Fix attempt 1: Removed unused `next-auth` dep (was in package.json but never imported; only mention was a string literal in an agent template). Generated `package-lock.json` (was missing entirely). Added `.npmrc` with `legacy-peer-deps=true`. Pushed — still failed.
+- Fix attempt 2: Changed `vercel.json` installCommand from `bun install` to `npm install --legacy-peer-deps` (bun doesn't respect .npmrc). Pushed — still failed.
+- Fix attempt 3 (diagnostic): Bypassed `vercel-build.sh` entirely. Set buildCommand to `npx prisma generate && npx next build`. Pushed — SUCCEEDED. So install + prisma generate + next build all work; the failure was inside `vercel-build.sh`.
+- Fix attempt 4: Rewrote `vercel-build.sh` with all DB-touching steps non-fatal. Pushed — still failed.
+- Fix attempt 5 (diagnostic): Minimal script (schema swap + prisma generate + next build only). Pushed — still failed.
+- Fix attempt 6 (diagnostic): No schema swap — use `npx prisma generate --schema=prisma/schema.postgres.prisma` directly. Pushed — SUCCEEDED. Root cause identified: the `cp`-based schema swap was the culprit.
+- Fix attempt 7 (final): Rewrote `vercel-build.sh` to use `--schema=prisma/schema.postgres.prisma` flag for all prisma commands (generate, db push). No file swapping, no trap, no .bak files. Pushed — SUCCEEDED.
+- Final smoke test of production:
+  - GET /api/auth/me -> 200 `{"user":null,"org":null,"memberships":[]}`
+  - GET /api/v1/models -> 401 `{"error":"Unauthorized","detail":"Missing or malformed Bearer token..."}`
+  - GET /api/providers -> 200 (legacy fallback still works)
+  - POST /api/auth/login with demo@marq.ai / marq-demo-123 -> 200 with user + org + memberships
+
+Stage Summary:
+- All SaaS code (RBAC, auth, unified external API, comparison, prompts, files, agents, failover) is on GitHub main (HEAD: 574eeba).
+- Vercel production build succeeds; all 31 routes are live at https://marqaiaggregator.vercel.app.
+- Demo user (demo@marq.ai / marq-demo-123) and demo org (Marq Demo) are seeded in Postgres.
+- Legacy /api/providers still works for any existing integrations.
+- SECURITY: Both credentials (GitHub PAT, Vercel token) used during this work and should be rotated by the user.
