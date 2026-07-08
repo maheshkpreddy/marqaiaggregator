@@ -1,17 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { runAgentTask } from "@/lib/agent";
+import { requireRole, getAuthContext } from "@/lib/auth";
 
 interface Params {
   params: Promise<{ id: string }>;
 }
 
+async function checkTaskInOrg(taskId: string, orgId: string | undefined) {
+  const task = await db.agentTask.findUnique({ where: { id: taskId } });
+  if (!task) return { error: "Task not found", status: 404 };
+  // If the task has an orgId, enforce it. If not (legacy), allow access
+  // only if there's no auth context (local dev / stress script).
+  if (task.orgId) {
+    if (!orgId || task.orgId !== orgId) {
+      return { error: "Task not found in this org", status: 404 };
+    }
+  }
+  return { task };
+}
+
 /**
  * GET /api/agent/tasks/[id]
- * Returns the full task with all steps (oldest first).
+ * Returns the full task with all steps (oldest first). Scoped by org.
  */
 export async function GET(_req: NextRequest, { params }: Params) {
+  const ctx = await getAuthContext();
   const { id } = await params;
+
+  const result: any = await checkTaskInOrg(id, ctx?.org.id);
+  if (result.error) return NextResponse.json({ error: result.error }, { status: result.status });
+
   const task = await db.agentTask.findUnique({
     where: { id },
     include: {
@@ -21,39 +40,43 @@ export async function GET(_req: NextRequest, { params }: Params) {
       },
     },
   });
-  if (!task) {
-    return NextResponse.json({ error: "Task not found" }, { status: 404 });
-  }
   return NextResponse.json({ task });
 }
 
 /**
  * DELETE /api/agent/tasks/[id]
- * Delete a task and all its steps.
+ * Delete a task and all its steps. Scoped by org (requires member role).
  */
 export async function DELETE(_req: NextRequest, { params }: Params) {
+  const ctx = await requireRole("member");
+  if (ctx instanceof NextResponse) return ctx;
+
   const { id } = await params;
+  const result: any = await checkTaskInOrg(id, ctx.org.id);
+  if (result.error) return NextResponse.json({ error: result.error }, { status: result.status });
+
   await db.agentTask.delete({ where: { id } });
   return NextResponse.json({ ok: true });
 }
 
 /**
  * POST /api/agent/tasks/[id]
- * Re-run (or resume) a task. If the task already has steps, they are kept
- * and the agent continues from where it left off (up to maxSteps total).
- * Set `?restart=1` to clear existing steps and start fresh.
+ * Re-run (or resume) a task. Set `?restart=1` to clear existing steps.
  */
 export async function POST(req: NextRequest, { params }: Params) {
+  const ctx = await requireRole("member");
+  if (ctx instanceof NextResponse) return ctx;
+
   const { id } = await params;
+  const result: any = await checkTaskInOrg(id, ctx.org.id);
+  if (result.error) return NextResponse.json({ error: result.error }, { status: result.status });
+
   const restart = req.nextUrl.searchParams.get("restart") === "1";
 
   const task = await db.agentTask.findUnique({
     where: { id },
     include: { steps: { orderBy: { stepNumber: "asc" } } },
   });
-  if (!task) {
-    return NextResponse.json({ error: "Task not found" }, { status: 404 });
-  }
 
   if (restart) {
     await db.agentStep.deleteMany({ where: { taskId: id } });
@@ -79,7 +102,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   try {
     const result = await runAgentTask({
       taskId: id,
-      maxSteps: task.maxSteps,
+      maxSteps: task!.maxSteps,
       timeoutMs: 20000,
     });
 

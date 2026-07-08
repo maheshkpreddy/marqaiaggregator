@@ -37,6 +37,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# uploads (user files — never commit)
+/uploads/
+tool-results/
+
 
 # typescript
 *.tsbuildinfo

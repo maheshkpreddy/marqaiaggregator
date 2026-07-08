@@ -45,7 +45,6 @@ import {
   Cpu,
   Layers,
   Pencil,
-  Key,
   ChevronUp,
   ChevronDown,
   CircleDot,
@@ -63,7 +62,36 @@ import {
   ClipboardList,
   TrendingUp,
   Compass,
+  GitCompare,
+  BookMarked,
+  Users,
+  Key,
+  LogOut,
+  Building2,
 } from "lucide-react";
+import { AuthScreen } from "@/components/auth-screen";
+import { OrganizationPanel } from "@/components/org-panel";
+import { ApiKeysPanel } from "@/components/api-keys-panel";
+import { ComparePanel } from "@/components/compare-panel";
+import { PromptsPanel } from "@/components/prompts-panel";
+
+// ---------- Auth types ----------
+interface AuthUser {
+  id: string;
+  email: string;
+  name: string | null;
+}
+interface AuthOrg {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+}
+interface Membership {
+  id: string;
+  role: string;
+  org: AuthOrg;
+}
 
 // ---------- Types ----------
 interface Provider {
@@ -262,7 +290,16 @@ const reasonLabel: Record<string, string> = {
 
 // ---------- Main Page ----------
 export default function Home() {
-  const [tab, setTab] = useState<"chat" | "agent" | "providers" | "health" | "failovers">("chat");
+  // ── Auth state ──
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authOrg, setAuthOrg] = useState<AuthOrg | null>(null);
+  const [authRole, setAuthRole] = useState<string | null>(null);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [orgMenuOpen, setOrgMenuOpen] = useState(false);
+
+  // ── App state ──
+  const [tab, setTab] = useState<"chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys">("chat");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -276,7 +313,31 @@ export default function Home() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  // --- Data loaders ---
+  // --- Auth bootstrap ---
+  // Check whether the user has a session cookie. If yes, populate authUser/org.
+  // If no, the AuthScreen is rendered instead of the app.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/me");
+        const data = await res.json();
+        if (data.user && data.org) {
+          setAuthUser(data.user);
+          setAuthOrg(data.org);
+          setAuthRole(data.role);
+          setMemberships(data.memberships ?? []);
+        } else {
+          setAuthUser(null);
+        }
+      } catch {
+        setAuthUser(null);
+      } finally {
+        setAuthChecking(false);
+      }
+    })();
+  }, []);
+
+  // --- Data loaders (only run when authenticated) ---
   const loadSessions = useCallback(async () => {
     const res = await fetch("/api/sessions");
     const data = await res.json();
@@ -306,10 +367,71 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!authUser) return;
     loadSessions();
     loadProviders();
     loadFailovers();
-  }, [loadSessions, loadProviders, loadFailovers]);
+  }, [authUser, loadSessions, loadProviders, loadFailovers]);
+
+  // --- Auth actions ---
+  async function handleAuthSuccess(data: {
+    user: AuthUser;
+    org: AuthOrg;
+  }) {
+    setAuthUser(data.user);
+    setAuthOrg(data.org);
+    setAuthRole("owner");
+    // Refresh the me endpoint to get the full memberships list
+    try {
+      const res = await fetch("/api/auth/me");
+      const d = await res.json();
+      if (d.memberships) setMemberships(d.memberships);
+    } catch {}
+  }
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setAuthUser(null);
+    setAuthOrg(null);
+    setAuthRole(null);
+    setMemberships([]);
+    setSessions([]);
+    setMessages([]);
+    setActiveSessionId(null);
+    setTab("chat");
+  }
+
+  async function handleSwitchOrg(orgId: string) {
+    try {
+      const res = await fetch("/api/auth/switch-org", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgId }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Failed to switch org");
+      setAuthOrg(d.org);
+      const m = memberships.find((mm) => mm.org.id === d.org.id);
+      setAuthRole(m?.role ?? "member");
+      setOrgMenuOpen(false);
+      // Reload org-scoped data
+      setSessions([]);
+      setMessages([]);
+      setActiveSessionId(null);
+      setTab("chat");
+      setTimeout(() => {
+        loadSessions();
+        loadFailovers();
+      }, 100);
+      toast({ title: `Switched to ${d.org.name}` });
+    } catch (err) {
+      toast({
+        title: "Could not switch org",
+        description: err instanceof Error ? err.message : "",
+        variant: "destructive",
+      });
+    }
+  }
 
   // Refresh the relevant data whenever the user switches to a tab.
   // The Chat tab is already kept live by per-session message loading, so
@@ -485,6 +607,20 @@ export default function Home() {
   const degradedCount = providers.filter((p) => p.status === "degraded").length;
   const downCount = providers.filter((p) => p.status === "down").length;
 
+  // ── Auth gate ──
+  // While checking the session, show a minimal loader. If no session, show
+  // the AuthScreen (login/signup). Otherwise render the authenticated app.
+  if (authChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+      </div>
+    );
+  }
+  if (!authUser || !authOrg || !authRole) {
+    return <AuthScreen onSuccess={handleAuthSuccess} />;
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
       {/* Header */}
@@ -529,6 +665,14 @@ export default function Home() {
                 <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Chat</span>
               </TabsTrigger>
+              <TabsTrigger value="compare" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <GitCompare className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Compare</span>
+              </TabsTrigger>
+              <TabsTrigger value="prompts" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <BookMarked className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Prompts</span>
+              </TabsTrigger>
               <TabsTrigger value="agent" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
                 <Brain className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Agent</span>
@@ -545,8 +689,64 @@ export default function Home() {
                 <Shield className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Failover Log</span>
               </TabsTrigger>
+              <TabsTrigger value="org" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Users className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Team</span>
+              </TabsTrigger>
+              <TabsTrigger value="apikeys" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Key className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">API Keys</span>
+              </TabsTrigger>
             </TabsList>
           </Tabs>
+
+          {/* Org switcher + user menu */}
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setOrgMenuOpen((o) => !o)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
+              >
+                <Building2 className="w-3.5 h-3.5 text-slate-500" />
+                <span className="hidden md:inline max-w-32 truncate">{authOrg.name}</span>
+                <Badge variant="outline" className="text-xs capitalize hidden lg:inline">{authRole}</Badge>
+                <ChevronDown className="w-3 h-3 text-slate-400" />
+              </button>
+              {orgMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setOrgMenuOpen(false)} />
+                  <div className="absolute right-0 mt-1 w-64 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-lg z-50">
+                    <div className="p-2 text-xs uppercase text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                      Your organizations
+                    </div>
+                    {memberships.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => handleSwitchOrg(m.org.id)}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 ${m.org.id === authOrg.id ? "bg-slate-50 dark:bg-slate-800/50" : ""}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                          <span className="truncate">{m.org.name}</span>
+                        </span>
+                        <Badge variant="outline" className="text-xs capitalize">{m.role}</Badge>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
+              <Avatar className="w-7 h-7">
+                <AvatarFallback className="text-xs">
+                  {(authUser.name || authUser.email).slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <Button size="sm" variant="ghost" onClick={handleLogout} title="Sign out">
+                <LogOut className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -766,6 +966,26 @@ export default function Home() {
           {/* FAILOVER LOG TAB */}
           <TabsContent value="failovers" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
             <FailoverLogPanel failovers={failovers} onRefresh={loadFailovers} />
+          </TabsContent>
+
+          {/* COMPARE TAB */}
+          <TabsContent value="compare" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <ComparePanel providers={providers} />
+          </TabsContent>
+
+          {/* PROMPTS TAB */}
+          <TabsContent value="prompts" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <PromptsPanel onUse={(body) => { setInput(body); setTab("chat"); }} />
+          </TabsContent>
+
+          {/* ORG / TEAM TAB */}
+          <TabsContent value="org" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <OrganizationPanel auth={{ user: authUser, org: authOrg, role: authRole }} />
+          </TabsContent>
+
+          {/* API KEYS TAB */}
+          <TabsContent value="apikeys" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <ApiKeysPanel auth={{ role: authRole }} />
           </TabsContent>
         </Tabs>
       </main>

@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireRole, getAuthContext } from "@/lib/auth";
 
 /**
  * GET /api/providers
  * Returns all configured AI providers, ordered by priority.
+ *
+ * Providers are global (shared across orgs in this build — every org sees
+ * the same provider registry). Read access requires at least viewer role,
+ * but we fall back to unauthenticated listing so the local stress-test
+ * script can still exercise the platform.
  */
 export async function GET() {
+  const ctx = await getAuthContext();
+  // Read is allowed unauthenticated for the legacy demo path; once a user
+  // is logged in we still allow them to read providers (providers are not
+  // org-scoped in this build).
+
   const providers = await db.provider.findMany({
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     include: {
@@ -39,14 +50,20 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({ providers: enriched });
+  return NextResponse.json({ providers: enriched, authenticated: Boolean(ctx) });
 }
 
 /**
  * POST /api/providers
  * Body: { name, displayName, description?, apiEndpoint?, apiKey?, models[], color?, icon? }
+ *
+ * Creating providers requires admin role (since providers are shared across
+ * all orgs on the instance, only admins should add/remove them).
  */
 export async function POST(req: NextRequest) {
+  const ctx = await requireRole("admin");
+  if (ctx instanceof NextResponse) return ctx;
+
   const body = await req.json();
   const { name, displayName, description, apiEndpoint, apiKey, models, color, icon } = body ?? {};
 

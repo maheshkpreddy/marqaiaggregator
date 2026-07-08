@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireRole } from "@/lib/auth";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -7,14 +8,18 @@ interface Params {
 
 /**
  * GET /api/sessions/[id]/messages
- * Returns all messages for a session, oldest first.
+ * Returns all messages for a session, oldest first. Scoped by org.
  */
 export async function GET(_req: NextRequest, { params }: Params) {
+  const ctx = await requireRole("viewer");
+  if (ctx instanceof NextResponse) return ctx;
+
   const { id } = await params;
   const session = await db.chatSession.findUnique({ where: { id } });
-  if (!session) {
-    return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  if (!session || session.orgId !== ctx.org.id) {
+    return NextResponse.json({ error: "Session not found in this org" }, { status: 404 });
   }
+
   const messages = await db.message.findMany({
     where: { sessionId: id },
     orderBy: { createdAt: "asc" },
@@ -47,10 +52,17 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 /**
  * DELETE /api/sessions/[id]/messages
- * Convenience: clears all messages in the session.
+ * Clears all messages in the session.
  */
 export async function DELETE(_req: NextRequest, { params }: Params) {
+  const ctx = await requireRole("member");
+  if (ctx instanceof NextResponse) return ctx;
+
   const { id } = await params;
+  const session = await db.chatSession.findUnique({ where: { id } });
+  if (!session || session.orgId !== ctx.org.id) {
+    return NextResponse.json({ error: "Session not found in this org" }, { status: 404 });
+  }
   await db.message.deleteMany({ where: { sessionId: id } });
   return NextResponse.json({ ok: true });
 }

@@ -14,6 +14,139 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────────────────────
+// SaaS / Multi-tenant layer
+// ─────────────────────────────────────────────────────────────
+// An Organization is a tenant (a company subscribing to Marq AI).
+// Every chat session, agent task, prompt, file, and API key belongs to an
+// Organization so that data is strictly isolated between customers.
+//
+// Users belong to one or more Organizations via Memberships, with a role
+// (owner | admin | member | viewer) that gates what they can do.
+
+model Organization {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  plan            String   @default("free") // free | pro | enterprise
+  seatsTotal      Int      @default(5)
+  seatsUsed       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  memberships     Membership[]
+  sessions        ChatSession[]
+  agentTasks      AgentTask[]
+  failoverLogs    FailoverLog[]
+  prompts         Prompt[]
+  files           FileUpload[]
+  apiKeys         ApiKey[]
+  comparisonRuns  ComparisonRun[]
+}
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  name            String?
+  passwordHash    String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  memberships     Membership[]
+  sessions        AuthSession[]
+}
+
+model Membership {
+  id              String   @id @default(cuid())
+  userId          String
+  orgId           String
+  role            String   @default("member") // owner | admin | member | viewer
+  createdAt       DateTime @default(now())
+
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@index([orgId])
+}
+
+model AuthSession {
+  id              String   @id @default(cuid())
+  userId          String
+  token           String   @unique
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model ApiKey {
+  id              String   @id @default(cuid())
+  orgId           String
+  name            String
+  keyPrefix       String   // first 12 chars of the key, shown in UI
+  keyHash         String   @unique // SHA-256 hash of the full key
+  scopes          String   @default("chat,compare,agents") // CSV: chat,compare,agents,read
+  lastUsedAt      DateTime?
+  createdAt       DateTime @default(now())
+  revokedAt       DateTime?
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+}
+
+model Prompt {
+  id              String   @id @default(cuid())
+  orgId           String
+  title           String
+  body            String
+  category        String   @default("general")
+  tags            String   @default("") // CSV
+  createdBy       String?  // user id (best-effort, not enforced FK)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, category])
+}
+
+model FileUpload {
+  id              String   @id @default(cuid())
+  orgId           String
+  filename        String
+  contentType     String
+  sizeBytes       Int
+  storageKey      String   // path/key under uploads/
+  uploadedBy      String?  // user id
+  createdAt       DateTime @default(now())
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+}
+
+model ComparisonRun {
+  id              String   @id @default(cuid())
+  orgId           String
+  prompt          String
+  providerIds     String   // JSON array of provider IDs that were compared
+  results         String   // JSON array of per-provider results
+  createdAt       DateTime @default(now())
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Provider registry
+// ─────────────────────────────────────────────────────────────
+
 model Provider {
   id          String   @id @default(cuid())
   name        String   @unique
@@ -50,6 +183,8 @@ model HealthLog {
 
 model ChatSession {
   id          String   @id @default(cuid())
+  orgId       String?
+  org         Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
   title       String   @default("New Conversation")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -77,6 +212,8 @@ model Message {
 
 model FailoverLog {
   id              String   @id @default(cuid())
+  orgId           String?
+  org             Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
   fromProviderId  String
   fromProvider    Provider @relation("FailoverFrom", fields: [fromProviderId], references: [id], onDelete: Cascade)
   toProviderId    String
@@ -87,24 +224,21 @@ model FailoverLog {
   createdAt       DateTime @default(now())
 
   @@index([createdAt])
+  @@index([orgId, createdAt])
 }
 
 // ─────────────────────────────────────────────────────────────
 // Agent module
 // ─────────────────────────────────────────────────────────────
-// An AgentTask is a user-submitted goal that the agent loop tries to
-// accomplish using tools. Each iteration of the ReAct loop produces an
-// AgentStep: thought + action (tool call) + observation, or a final answer.
-// Every LLM call inside the loop runs through the failover engine, so if
-// the primary provider fails mid-task, the agent transparently continues
-// with the next provider in the priority chain.
 
 model AgentTask {
   id                String   @id @default(cuid())
+  orgId             String?
+  org               Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
   title             String
   goal              String
-  agentType         String   @default("general") // key from src/lib/agent-templates.ts
-  status            String   @default("pending") // pending | running | completed | failed | cancelled
+  agentType         String   @default("general")
+  status            String   @default("pending")
   maxSteps          Int      @default(8)
   primaryProviderId String?
   finalAnswer       String?
@@ -120,6 +254,7 @@ model AgentTask {
   @@index([createdAt])
   @@index([status])
   @@index([agentType])
+  @@index([orgId, createdAt])
 }
 
 model AgentStep {
@@ -128,9 +263,9 @@ model AgentStep {
   task            AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
   stepNumber      Int
   thought         String?
-  action          String?   // tool name, or "final_answer"
-  actionInput     String?   // JSON-encoded tool input
-  observation     String?   // tool output (string)
+  action          String?
+  actionInput     String?
+  observation     String?
   providerId      String?
   provider        Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
   model           String?

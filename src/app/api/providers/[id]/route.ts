@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireRole } from "@/lib/auth";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -7,9 +8,12 @@ interface Params {
 
 /**
  * PATCH /api/providers/[id]
- * Update provider fields. Body: any subset of { displayName, description, apiEndpoint, apiKey, models, active, priority, color, icon }
+ * Update provider fields. Requires admin role.
  */
 export async function PATCH(req: NextRequest, { params }: Params) {
+  const ctx = await requireRole("admin");
+  if (ctx instanceof NextResponse) return ctx;
+
   const { id } = await params;
   const body = await req.json();
 
@@ -32,6 +36,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
  * DELETE /api/providers/[id]
  */
 export async function DELETE(_req: NextRequest, { params }: Params) {
+  const ctx = await requireRole("admin");
+  if (ctx instanceof NextResponse) return ctx;
+
   const { id } = await params;
   await db.provider.delete({ where: { id } });
   return NextResponse.json({ ok: true });

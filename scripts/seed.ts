@@ -1,12 +1,45 @@
 /**
- * Seed Marq AI Aggregator with default providers + sample agent tasks.
- * Run with: bun run /home/z/my-project/scripts/seed.ts
+ * Seed Marq AI Aggregator with default providers + a demo org/user so the
+ * freshly-deployed app is immediately usable. Run with:
+ *   bun run /home/z/my-project/scripts/seed.ts
+ *
+ * If a demo user already exists, this script is idempotent — it only
+ * creates what's missing.
  */
 import { db } from "../src/lib/db";
 import { AGENT_TEMPLATES } from "../src/lib/agent-templates";
+import { hashPassword, slugify } from "../src/lib/auth";
 
 async function main() {
   console.log("Seeding Marq AI Aggregator default providers...");
+
+  // ── Demo org + user (so a fresh Vercel deploy is immediately usable) ──
+  const demoEmail = "demo@marq.ai";
+  let user = await db.user.findUnique({ where: { email: demoEmail } });
+  if (!user) {
+    const org = await db.organization.create({
+      data: {
+        name: "Marq Demo",
+        slug: slugify("Marq Demo"),
+        plan: "free",
+        seatsTotal: 5,
+        seatsUsed: 1,
+      },
+    });
+    user = await db.user.create({
+      data: {
+        email: demoEmail,
+        name: "Marq Demo",
+        passwordHash: hashPassword("marq-demo-123"),
+      },
+    });
+    await db.membership.create({
+      data: { userId: user.id, orgId: org.id, role: "owner" },
+    });
+    console.log("  ✓ Created demo org 'Marq Demo' + demo user demo@marq.ai / marq-demo-123");
+  } else {
+    console.log("  ✓ Demo user already exists");
+  }
 
   const providers = [
     {
