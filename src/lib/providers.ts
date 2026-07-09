@@ -90,8 +90,13 @@ export async function callProvider(
  * Demo-mode call: generates a canned response locally.
  *
  * No external network call is made — the platform runs anywhere without any
- * API credentials. We simulate per-provider latency and a small failure rate
- * so the failover engine is exercised on first load.
+ * API credentials. We simulate per-provider latency so the comparison view
+ * feels realistic, but demo mode ALWAYS succeeds — we never throw a fake
+ * error. (Previously we injected a random failure rate to exercise the
+ * failover engine, but this caused health checks to mark providers as
+ * "Down" randomly, which was confusing on the dashboard. The failover
+ * engine is still exercised when real API keys are added and a real
+ * upstream provider returns 429/500/etc.)
  *
  * The response is contextual: it acknowledges the user's last message and
  * adopts the provider's persona. It's clearly labeled as demo output so
@@ -102,25 +107,12 @@ async function demoModeCall(
   req: ProviderChatRequest,
   start: number,
 ): Promise<ProviderChatResult> {
-  // Simulate a per-provider failure rate so the user can see failover work.
-  // The "claude" provider is intentionally a bit flakier to make demos lively.
-  const failRate = provider.name === "claude" ? 0.18 : provider.name === "gemini" ? 0.08 : 0.04;
-  if (Math.random() < failRate) {
-    const reasons: FailoverReason[] = ["timeout", "rate_limit", "server_error"];
-    const reason = reasons[Math.floor(Math.random() * reasons.length)];
-    throw new ProviderError(
-      reason,
-      `[demo] ${provider.displayName} simulated ${reason}`,
-      provider.name,
-    );
-  }
-
-  // Simulate per-provider latency (in ms).
+  // Simulate per-provider latency (in ms) — no failures, ever.
   const baseLatency =
     provider.name === "openai" ? 350 :
     provider.name === "gemini" ? 500 :
     provider.name === "claude" ? 700 : 450;
-  const jitter = Math.floor(Math.random() * 300);
+  const jitter = Math.floor(Math.random() * 200);
   await new Promise((r) => setTimeout(r, baseLatency + jitter));
 
   const content = buildDemoResponse(provider, req);
