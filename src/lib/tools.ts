@@ -44,34 +44,20 @@ export const TOOLS: Tool[] = [
       }
       const num = Math.min(Math.max(args.num ?? 5, 1), 10);
       try {
-        const ZAI = (await import("z-ai-web-dev-sdk")).default;
-        const zai = await ZAI.create();
-        const results = (await zai.functions.invoke("web_search", {
-          query: args.query,
-          num,
-        })) as Array<{
-          name?: string;
-          url?: string;
-          snippet?: string;
-          host_name?: string;
-          date?: string;
-        }>;
-
-        if (!Array.isArray(results) || results.length === 0) {
+        // Local mock results — deterministic per query so the agent can reason
+        // about them consistently. Real web search requires wiring a search
+        // API (Bing/Google/Brave) key here; for now we return canned results.
+        const results = mockWebSearchResults(args.query, num);
+        if (results.length === 0) {
           return `No web results found for: "${args.query}"`;
         }
-
         const formatted = results
           .map((r, i) => {
-            const title = r.name ?? "(untitled)";
-            const url = r.url ?? "";
-            const snippet = r.snippet ?? "";
-            const host = r.host_name ?? "";
-            const date = r.date ?? "";
-            return `[${i + 1}] ${title}${date ? ` (${date})` : ""}\n    ${url}\n    ${host}\n    ${snippet}`;
+            return `[${i + 1}] ${r.title}${r.date ? ` (${r.date})` : ""}\n    ${r.url}\n    ${r.host}\n    ${r.snippet}`;
           })
           .join("\n\n");
-        return formatted;
+        return formatted +
+          "\n\n⚠️ These are simulated results. Wire a real search API key (Bing/Google/Brave) into web_search to get live results.";
       } catch (err) {
         return `web_search failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -135,20 +121,13 @@ export const TOOLS: Tool[] = [
         return args.text;
       }
       try {
-        const ZAI = (await import("z-ai-web-dev-sdk")).default;
-        const zai = await ZAI.create();
-        const completion = await zai.chat.completions.create({
-          messages: [
-            {
-              role: "assistant",
-              content:
-                "You are a precise summarizer. Summarize the user's text in 2-3 sentences, preserving the key facts and numbers. Do not add any new information.",
-            },
-            { role: "user", content: args.text.slice(0, 8000) },
-          ],
-          thinking: { type: "disabled" },
-        });
-        return (completion.choices[0]?.message?.content ?? "").trim() || "(no summary produced)";
+        // Local extractive summary: split into sentences, pick the first
+        // sentence plus any sentence containing a number, up to 3 total.
+        // This is deterministic and works offline. For abstractive summaries,
+        // configure a real provider API key and route through callProvider().
+        const summary = extractiveSummary(args.text.slice(0, 8000), 3);
+        return summary +
+          "\n\n⚠️ Extractive summary (offline). For abstractive summaries, configure a provider API key.";
       } catch (err) {
         return `text_summary failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -177,27 +156,12 @@ export const TOOLS: Tool[] = [
       const language = (args.language ?? "typescript").trim().toLowerCase();
       const context = (args.context ?? "").trim();
       try {
-        const ZAI = (await import("z-ai-web-dev-sdk")).default;
-        const zai = await ZAI.create();
-        const completion = await zai.chat.completions.create({
-          messages: [
-            {
-              role: "assistant",
-              content:
-                "You are a senior software engineer. Generate production-quality code that solves the user's task. " +
-                "Return ONLY: a fenced code block in the requested language, followed by a one-line summary of what it does. " +
-                "Do not include any other prose.",
-            },
-            {
-              role: "user",
-              content:
-                `Language: ${language}\nTask: ${args.task}\n` +
-                (context ? `Context / constraints: ${context}\n` : ""),
-            },
-          ],
-          thinking: { type: "disabled" },
-        });
-        return (completion.choices[0]?.message?.content ?? "").trim() || "(no code produced)";
+        // Local templated code stub — deterministic per language + task.
+        // For real LLM-generated code, configure a provider API key in the
+        // Providers tab; the main chat / agent reasoning will use it.
+        const code = templatedCodeStub(language, args.task, context);
+        return code +
+          "\n\n⚠️ Templated stub (offline). For LLM-generated code, configure a provider API key.";
       } catch (err) {
         return `generate_code failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -264,25 +228,12 @@ export const TOOLS: Tool[] = [
         return "Error: parse_requirements requires a 'text' string.";
       }
       try {
-        const ZAI = (await import("z-ai-web-dev-sdk")).default;
-        const zai = await ZAI.create();
-        const completion = await zai.chat.completions.create({
-          messages: [
-            {
-              role: "assistant",
-              content:
-                "You are a senior business analyst. From the user's brief, extract structured requirements as a plain-text numbered list. " +
-                "Use the format:\n" +
-                "Functional:\n  F1. <requirement>\n  ...\n" +
-                "Non-functional:\n  N1. <requirement>\n  ...\n" +
-                "Assumptions:\n  A1. <assumption>\n  ...\n" +
-                "Keep each item to a single sentence. Do not add prose outside these sections.",
-            },
-            { role: "user", content: args.text.slice(0, 6000) },
-          ],
-          thinking: { type: "disabled" },
-        });
-        return (completion.choices[0]?.message?.content ?? "").trim() || "(no requirements extracted)";
+        // Local heuristic extraction: split the brief into sentences, then
+        // classify each as functional / non-functional / assumption based on
+        // keyword matching. Deterministic and offline.
+        const requirements = extractRequirements(args.text.slice(0, 6000));
+        return requirements +
+          "\n\n⚠️ Heuristic extraction (offline). For LLM-grade parsing, configure a provider API key.";
       } catch (err) {
         return `parse_requirements failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -457,42 +408,272 @@ export const TOOLS: Tool[] = [
       }
       const service = (args.service ?? "marq-api").trim();
       try {
-        const ZAI = (await import("z-ai-web-dev-sdk")).default;
-        const zai = await ZAI.create();
-        const completion = await zai.chat.completions.create({
-          messages: [
-            {
-              role: "assistant",
-              content:
-                "You are a senior SRE. Write a concise operational runbook for the given scenario. " +
-                "Use this exact structure (plain text, no markdown):\\n" +
-                "RUNBOOK: <scenario>\\n" +
-                "Service: <service>\\n" +
-                "Severity: <SEV-1..SEV-3>\\n" +
-                "\\n" +
-                "1. Detect\\n   - <signal>\\n   - <threshold>\\n" +
-                "2. Triage\\n   - <how to confirm>\\n   - <who to page>\\n" +
-                "3. Mitigate\\n   - <step 1>\\n   - <step 2>\\n" +
-                "4. Resolve\\n   - <step 1>\\n   - <step 2>\\n" +
-                "5. Post-mortem\\n   - <within 48h>\\n" +
-                "\\n" +
-                "Rollback: <one-line rollback command or step>\\n" +
-                "Keep each bullet to one line. Do not include prose outside the structure.",
-            },
-            {
-              role: "user",
-              content: `Scenario: ${args.scenario}\nService: ${service}`,
-            },
-          ],
-          thinking: { type: "disabled" },
-        });
-        return (completion.choices[0]?.message?.content ?? "").trim() || "(no runbook produced)";
+        // Local templated runbook — deterministic per scenario + service.
+        // For LLM-authored runbooks, configure a provider API key.
+        const runbook = templatedRunbook(args.scenario, service);
+        return runbook +
+          "\n\n⚠️ Templated runbook (offline). For LLM-authored runbooks, configure a provider API key.";
       } catch (err) {
         return `write_runbook failed: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
   },
 ];
+
+// ─────────────────────────────────────────────────────────────
+// Local helper functions for the LLM-using tools (web_search,
+// text_summary, generate_code, parse_requirements, write_runbook).
+//
+// These produce deterministic offline output so the platform runs
+// anywhere without external API dependencies. When a real provider
+// API key is configured (via the Providers tab), the main chat path
+// and agent reasoning use real LLM responses — only these tool
+// helpers remain offline.
+// ─────────────────────────────────────────────────────────────
+
+function mockWebSearchResults(
+  query: string,
+  num: number,
+): Array<{ title: string; url: string; host: string; snippet: string; date: string }> {
+  const seed = hashString(query);
+  const hosts = [
+    "wikipedia.org",
+    "arxiv.org",
+    "github.com",
+    "stackoverflow.com",
+    "medium.com",
+    "techcrunch.com",
+    "theverge.com",
+    "blog.marqai.app",
+  ];
+  const titles = [
+    `${query} — Overview`,
+    `Understanding ${query}: a practical guide`,
+    `${query}: latest developments and analysis`,
+    `How ${query} works under the hood`,
+    `${query} best practices for 2026`,
+    `Common pitfalls with ${query}`,
+    `${query} — reference documentation`,
+    `Real-world case study: ${query} in production`,
+  ];
+  const snippets = [
+    `A comprehensive overview of ${query}, covering the core concepts, common use cases, and recent developments in the field.`,
+    `This guide walks through ${query} step by step, with worked examples and a discussion of trade-offs.`,
+    `Recent analysis of ${query} suggests the landscape is shifting rapidly, with new entrants and consolidation among incumbents.`,
+    `Under the hood, ${query} relies on a combination of statistical methods and heuristic routing. This article explains the internals.`,
+    `Best practices for ${query} in 2026 emphasize observability, graceful degradation, and clear separation of concerns.`,
+    `Teams adopting ${query} often stumble on edge cases around rate limits, retries, and partial failures. Here's how to avoid them.`,
+    `Official reference documentation for ${query}, including API signatures, configuration options, and versioning policy.`,
+    `A production case study of ${query} at scale, including the architecture choices that paid off and the ones we'd redo.`,
+  ];
+  const results: Array<{ title: string; url: string; host: string; snippet: string; date: string }> = [];
+  for (let i = 0; i < num; i++) {
+    const idx = (seed + i * 7) % hosts.length;
+    const host = hosts[idx];
+    const title = titles[(seed + i * 3) % titles.length];
+    const snippet = snippets[(seed + i * 5) % snippets.length];
+    const date = new Date(Date.now() - (seed % 90 + i * 7) * 86400000).toISOString().slice(0, 10);
+    const url = `https://${host}/articles/${query.toLowerCase().replace(/\s+/g, "-").slice(0, 40)}-${(seed + i).toString(36)}`;
+    results.push({ title, url, host, snippet, date });
+  }
+  return results;
+}
+
+function extractiveSummary(text: string, maxSentences: number): string {
+  // Split into sentences (naive — splits on . ! ? followed by space + capital).
+  const sentences = text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 20);
+  if (sentences.length === 0) return text.slice(0, 300);
+
+  // Always include the first sentence, then prefer sentences with numbers
+  // (they usually carry facts), then fill with the longest remaining sentences.
+  const picked: string[] = [sentences[0]];
+  const pickedIdx = new Set([0]);
+
+  const numeric = sentences
+    .map((s, i) => ({ s, i, hasNum: /\d/.test(s) }))
+    .filter((x) => x.hasNum && !pickedIdx.has(x.i))
+    .sort((a, b) => b.s.length - a.s.length);
+  for (const x of numeric) {
+    if (picked.length >= maxSentences) break;
+    picked.push(x.s);
+    pickedIdx.add(x.i);
+  }
+
+  if (picked.length < maxSentences) {
+    const remaining = sentences
+      .map((s, i) => ({ s, i }))
+      .filter((x) => !pickedIdx.has(x.i))
+      .sort((a, b) => b.s.length - a.s.length);
+    for (const x of remaining) {
+      if (picked.length >= maxSentences) break;
+      picked.push(x.s);
+    }
+  }
+
+  return picked.join(" ");
+}
+
+function templatedCodeStub(language: string, task: string, context: string): string {
+  const taskSlug = task.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+  const ctxLine = context ? `\n// Context: ${context}` : "";
+
+  switch (language) {
+    case "typescript":
+    case "ts":
+    case "javascript":
+    case "js":
+      return [
+        "```typescript",
+        `// Task: ${task}${ctxLine}`,
+        ``,
+        `export function ${taskSlug.replace(/-/g, "_") || "solution"}(input: unknown): unknown {`,
+        `  // TODO: implement the task described above.`,
+        `  // This stub was generated offline — the structure reflects the task,`,
+        `  // but the body needs to be filled in with real logic.`,
+        `  if (input == null) throw new Error("input is required");`,
+        `  return input;`,
+        `}`,
+        "```",
+        ``,
+        `One-line summary: a TypeScript function stub for "${task}".`,
+      ].join("\n");
+
+    case "python":
+    case "py":
+      return [
+        "```python",
+        `# Task: ${task}${ctxLine}`,
+        ``,
+        `def ${taskSlug.replace(/-/g, "_") || "solution"}(input):`,
+        `    """TODO: implement the task described above."""`,
+        `    if input is None:`,
+        `        raise ValueError("input is required")`,
+        `    return input`,
+        "```",
+        ``,
+        `One-line summary: a Python function stub for "${task}".`,
+      ].join("\n");
+
+    case "bash":
+    case "sh":
+    case "shell":
+      return [
+        "```bash",
+        `#!/usr/bin/env bash`,
+        `# Task: ${task}${ctxLine}`,
+        `set -euo pipefail`,
+        ``,
+        `# TODO: implement the task described above.`,
+        `echo "stub for: ${task}"`,
+        "```",
+        ``,
+        `One-line summary: a bash script stub for "${task}".`,
+      ].join("\n");
+
+    default:
+      return [
+        `Code stub for language "${language}"`,
+        `Task: ${task}`,
+        context ? `Context: ${context}` : "",
+        ``,
+        `// TODO: implement the task described above.`,
+        `// This stub was generated offline because the language "${language}"`,
+        `// doesn't have a dedicated template. Configure a provider API key`,
+        `// for LLM-generated code in any language.`,
+      ].filter(Boolean).join("\n");
+  }
+}
+
+function extractRequirements(text: string): string {
+  // Heuristic: split into sentences, classify by keywords.
+  const sentences = text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9])/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 10);
+
+  const functional: string[] = [];
+  const nonFunctional: string[] = [];
+  const assumptions: string[] = [];
+
+  const nfKeywords = ["fast", "secure", "scalable", "available", "reliable", "performance", "latency", "throughput", "compliance", "audit", "log", "monitor"];
+  const assumeKeywords = ["assume", "assumption", "given", "provided", "expect", "should already"];
+
+  for (const s of sentences) {
+    const lower = s.toLowerCase();
+    if (assumeKeywords.some((k) => lower.includes(k))) {
+      assumptions.push(s);
+    } else if (nfKeywords.some((k) => lower.includes(k))) {
+      nonFunctional.push(s);
+    } else {
+      // Anything that looks like an action/feature → functional.
+      functional.push(s);
+    }
+  }
+
+  const lines: string[] = [];
+  lines.push("Functional:");
+  if (functional.length === 0) {
+    lines.push("  F1. (none extracted — brief may be too short or vague)");
+  } else {
+    functional.slice(0, 8).forEach((s, i) => lines.push(`  F${i + 1}. ${s}`));
+  }
+  lines.push("");
+  lines.push("Non-functional:");
+  if (nonFunctional.length === 0) {
+    lines.push("  N1. (none explicitly stated — consider asking the stakeholder)");
+  } else {
+    nonFunctional.slice(0, 6).forEach((s, i) => lines.push(`  N${i + 1}. ${s}`));
+  }
+  lines.push("");
+  lines.push("Assumptions:");
+  if (assumptions.length === 0) {
+    lines.push("  A1. (none stated — confirm with stakeholder before implementation)");
+  } else {
+    assumptions.slice(0, 5).forEach((s, i) => lines.push(`  A${i + 1}. ${s}`));
+  }
+  return lines.join("\n");
+}
+
+function templatedRunbook(scenario: string, service: string): string {
+  const seed = hashString(`${scenario}|${service}`);
+  const severity = seed % 3 === 0 ? "SEV-1" : seed % 3 === 1 ? "SEV-2" : "SEV-3";
+  return [
+    `RUNBOOK: ${scenario}`,
+    `Service: ${service}`,
+    `Severity: ${severity}`,
+    ``,
+    `1. Detect`,
+    `   - Alert fired by ${service} health monitor (threshold: error rate > 1% over 5m)`,
+    `   - Synthetic probe from bom1 region returned 5xx for 3 consecutive checks`,
+    ``,
+    `2. Triage`,
+    `   - Confirm via /api/health endpoint — check provider health table`,
+    `   - Page on-call engineer (P0/P1 only); slack #marq-ops for SEV-3`,
+    `   - Check #marq-incidents channel for related reports`,
+    ``,
+    `3. Mitigate`,
+    `   - If provider outage: failover engine should kick in automatically; verify via /api/failovers`,
+    `   - If app-level error: roll back to previous deployment via Vercel dashboard`,
+    `   - If DB issue: check Neon console for connection limits; scale up if needed`,
+    ``,
+    `4. Resolve`,
+    `   - Verify /api/health returns 200 with all providers healthy`,
+    `   - Run smoke test: POST /api/v1/chat/completions with a test prompt`,
+    `   - Close incident in #marq-incidents; post resolution summary`,
+    ``,
+    `5. Post-mortem`,
+    `   - Schedule within 48h (owner: on-call engineer)`,
+    `   - Document timeline, root cause, action items in the incident doc`,
+    `   - Add monitoring/alerts that would have caught it sooner`,
+    ``,
+    `Rollback: vercel rollback ${service} --yes  (or revert the last commit on main and let auto-deploy handle it)`,
+  ].join("\n");
+}
 
 // Tiny stable string hash used by deterministic tools (run_tests, get_deploy_status, create_ticket).
 // Not cryptographic — just needs to be fast and stable across runs.

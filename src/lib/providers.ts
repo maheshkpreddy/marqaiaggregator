@@ -2,9 +2,16 @@
  * Marq AI Aggregator - Provider Registry & Adapters
  *
  * Each provider has a unified interface `chat()` that returns a streamed-or-final response.
- * In production, you'd add real OpenAI/Gemini/Claude SDK calls here.
- * In demo mode (no API key configured), we route through z-ai-web-dev-sdk and
- * simulate per-provider latency / failure behavior so the failover engine is exercised.
+ *
+ * Two modes:
+ *  - Demo mode (no API key configured on the Provider row): generates a canned
+ *    but contextual response LOCALLY — no external API call. Simulated per-provider
+ *    latency + a small failure rate so the failover engine is exercised. This is
+ *    the default out-of-the-box experience so the platform runs anywhere
+ *    (including Vercel free tier) without any external credentials.
+ *  - Real mode (API key set on the Provider row): calls the real provider API
+ *    (OpenAI / Gemini / Claude) via fetch(). Replace demoModeCall's canned
+ *    responses with real responses transparently once a key is added.
  */
 
 import type { Provider } from "@prisma/client";
@@ -61,11 +68,11 @@ export function classifyError(err: unknown): FailoverReason {
 }
 
 /**
- * Demo mode adapter: uses z-ai-web-dev-sdk under the hood.
+ * Dispatch a chat request to a provider.
  *
- * In production with real API keys set, you would swap this for direct
- * fetch() calls to OpenAI / Gemini / Claude endpoints. The interface stays
- * the same — only the body of this function changes.
+ * If the provider has an API key configured (via the Providers tab in the UI),
+ * we call the real provider API. Otherwise we fall back to demo mode, which
+ * generates a canned-but-contextual response locally.
  */
 export async function callProvider(
   provider: Provider,
@@ -73,23 +80,22 @@ export async function callProvider(
 ): Promise<ProviderChatResult> {
   const start = Date.now();
 
-  // Demo behavior — only triggers when there is no real API key.
-  // This lets the user explore failover in the sandbox without real keys.
-  if (!provider.apiKey) {
-    return demoModeCall(provider, req, start);
+  if (provider.apiKey) {
+    return realModeCall(provider, req, start);
   }
-
-  // Real provider dispatch. Each branch can be filled in with the official
-  // SDK or direct REST calls. For now, we still route through z-ai-web-dev-sdk
-  // so the platform works end-to-end; you can replace these branches with
-  // real SDK calls when ready.
-  return realModeCall(provider, req, start);
+  return demoModeCall(provider, req, start);
 }
 
 /**
- * Demo-mode call: routes through z-ai-web-dev-sdk with simulated per-provider
- * personality, latency, and a small probability of failure so the failover
- * engine actually gets exercised.
+ * Demo-mode call: generates a canned response locally.
+ *
+ * No external network call is made — the platform runs anywhere without any
+ * API credentials. We simulate per-provider latency and a small failure rate
+ * so the failover engine is exercised on first load.
+ *
+ * The response is contextual: it acknowledges the user's last message and
+ * adopts the provider's persona. It's clearly labeled as demo output so
+ * users know to add a real key for production use.
  */
 async function demoModeCall(
   provider: Provider,
@@ -117,23 +123,7 @@ async function demoModeCall(
   const jitter = Math.floor(Math.random() * 300);
   await new Promise((r) => setTimeout(r, baseLatency + jitter));
 
-  // Dynamic import to keep client bundle clean.
-  const ZAI = (await import("z-ai-web-dev-sdk")).default;
-  const zai = await ZAI.create();
-
-  // Build a per-provider "persona" so responses feel distinct.
-  const persona = personaFor(provider.name);
-  const messages = [
-    { role: "assistant" as const, content: persona },
-    ...req.messages,
-  ];
-
-  const completion = await zai.chat.completions.create({
-    messages,
-    thinking: { type: "disabled" },
-  });
-
-  const content = completion.choices[0]?.message?.content ?? "";
+  const content = buildDemoResponse(provider, req);
   const latencyMs = Date.now() - start;
 
   return {
@@ -145,42 +135,251 @@ async function demoModeCall(
 }
 
 /**
- * Real-mode call: when an API key is configured, this is where you'd dispatch
- * to the real provider SDK. For now it still routes through z-ai-web-dev-sdk
- * so the platform runs end-to-end in the sandbox, but the structure is here
- * for you to swap in real calls.
+ * Build a canned-but-contextual response for demo mode.
+ *
+ * Strategy: acknowledge the user's most recent message, echo a short summary
+ * back, and clearly state this is demo output. Each provider has its own
+ * personality so the comparison view feels meaningful.
+ */
+function buildDemoResponse(provider: Provider, req: ProviderChatRequest): string {
+  const lastUser = [...req.messages].reverse().find((m) => m.role === "user");
+  const userText = (lastUser?.content ?? "").trim();
+  const snippet = userText.length > 180 ? userText.slice(0, 180) + "…" : userText;
+
+  const persona = personaFor(provider.name);
+
+  // Provider-specific response styles — same prompt, different "feel".
+  switch (provider.name) {
+    case "openai":
+      return [
+        `_${persona}_`,
+        ``,
+        `**Demo response from Marq-OpenAI**`,
+        ``,
+        `You asked: "${snippet}".`,
+        ``,
+        `Here's a concise structured take:`,
+        `1. **Direct answer** — based on the message above, the key point is acknowledged and addressed head-on.`,
+        `2. **Reasoning** — the rationale follows from the question's framing, with assumptions made explicit.`,
+        `3. **Next step** — a concrete follow-up action you can take right away.`,
+        ``,
+        `> ⚠️ This is a simulated response. Add your OpenAI API key in the **Providers** tab to get real completions.`,
+      ].join("\n");
+
+    case "gemini":
+      return [
+        `_${persona}_`,
+        ``,
+        `**Demo response from Marq-Gemini**`,
+        ``,
+        `You asked: "${snippet}".`,
+        ``,
+        `Let me work through this step by step:`,
+        ``,
+        `**Step 1 — Context.** First, I parse the request and identify the underlying intent.`,
+        `**Step 2 — Assumptions.** I assume you want a grounded, factual answer (let me know if you want a creative take instead).`,
+        `**Step 3 — Analysis.** Based on the message, the most defensible interpretation leads to a multi-step recommendation.`,
+        `**Step 4 — Conclusion.** The answer follows from the above, with a clear pointer to verify the reasoning.`,
+        ``,
+        `> ⚠️ This is a simulated response. Add your Gemini API key in the **Providers** tab to get real completions.`,
+      ].join("\n");
+
+    case "claude":
+      return [
+        `_${persona}_`,
+        ``,
+        `**Demo response from Marq-Claude**`,
+        ``,
+        `Thanks for the message — you wrote: "${snippet}".`,
+        ``,
+        `Let me share a careful, balanced take. There are usually a few ways to read a question like this, and I want to honor that nuance rather than jumping to a single answer. The most thoughtful response considers the trade-offs involved and errs on the side of clarity without overstating certainty.`,
+        ``,
+        `If you'd like, I can go deeper on any particular angle — just let me know which aspect matters most to you.`,
+        ``,
+        `> ⚠️ This is a simulated response. Add your Anthropic API key in the **Providers** tab to get real completions.`,
+      ].join("\n");
+
+    default:
+      return [
+        `**Demo response from ${provider.displayName}**`,
+        ``,
+        `You asked: "${snippet}".`,
+        ``,
+        `> ⚠️ This is a simulated response. Add a real API key in the **Providers** tab to get real completions.`,
+      ].join("\n");
+  }
+}
+
+/**
+ * Real-mode call: dispatches to the real provider API via fetch().
+ *
+ * Supports:
+ *  - OpenAI  (POST https://api.openai.com/v1/chat/completions)
+ *  - Gemini  (POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent)
+ *  - Claude  (POST https://api.anthropic.com/v1/messages)
+ *
+ * If the provider's `name` is anything else, we fall back to the OpenAI shape
+ * against the configured `apiEndpoint` (so custom OpenAI-compatible providers
+ * like Together, Groq, Mistral, OpenRouter all work out of the box).
  */
 async function realModeCall(
   provider: Provider,
   req: ProviderChatRequest,
   start: number,
 ): Promise<ProviderChatResult> {
-  // Example for OpenAI (sketch):
-  //   const res = await fetch("https://api.openai.com/v1/chat/completions", {
-  //     method: "POST",
-  //     headers: { Authorization: `Bearer ${provider.apiKey}` },
-  //     body: JSON.stringify({ model: req.model, messages: req.messages }),
-  //     signal: req.signal,
-  //   });
-  //   if (!res.ok) throw new ProviderError(...);
-  //   const data = await res.json();
-  //   return { content: data.choices[0].message.content, ... };
+  const model = req.model || defaultModelFor(provider.name);
 
-  // For sandbox continuity, fall back to demo behavior even when a key is set,
-  // but skip the simulated failure so real-key usage feels reliable.
-  const ZAI = (await import("z-ai-web-dev-sdk")).default;
-  const zai = await ZAI.create();
-  const persona = personaFor(provider.name);
-  const completion = await zai.chat.completions.create({
-    messages: [{ role: "assistant", content: persona }, ...req.messages],
-    thinking: { type: "disabled" },
+  switch (provider.name) {
+    case "openai":
+      return callOpenAICompatible(provider, req, model, start);
+    case "gemini":
+      return callGemini(provider, req, model, start);
+    case "claude":
+      return callClaude(provider, req, model, start);
+    default:
+      // Treat unknown providers as OpenAI-compatible.
+      return callOpenAICompatible(provider, req, model, start);
+  }
+}
+
+/**
+ * Call any OpenAI-compatible chat completions endpoint.
+ * Used for OpenAI itself + any custom OpenAI-compatible provider.
+ */
+async function callOpenAICompatible(
+  provider: Provider,
+  req: ProviderChatRequest,
+  model: string,
+  start: number,
+): Promise<ProviderChatResult> {
+  const endpoint = provider.apiEndpoint || "https://api.openai.com/v1/chat/completions";
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${provider.apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: req.messages,
+    }),
+    signal: req.signal,
   });
-  const content = completion.choices[0]?.message?.content ?? "";
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ProviderError(
+      classifyError({ message: `${res.status} ${text.slice(0, 200)}` }),
+      `OpenAI-compatible call failed: ${res.status} ${text.slice(0, 200)}`,
+      provider.name,
+    );
+  }
+
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content ?? "";
   return {
     content,
-    model: req.model || defaultModelFor(provider.name),
+    model: data?.model ?? model,
     latencyMs: Date.now() - start,
-    tokensUsed: Math.ceil(content.length / 4),
+    tokensUsed: data?.usage?.total_tokens,
+  };
+}
+
+/**
+ * Call Google Gemini's generateContent endpoint.
+ */
+async function callGemini(
+  provider: Provider,
+  req: ProviderChatRequest,
+  model: string,
+  start: number,
+): Promise<ProviderChatResult> {
+  const base = (provider.apiEndpoint || "https://generativelanguage.googleapis.com/v1beta/models").replace(/\/$/, "");
+  const endpoint = `${base}/${model}:generateContent?key=${provider.apiKey}`;
+
+  // Map OpenAI-style messages → Gemini's contents[] format.
+  const systemMsg = req.messages.find((m) => m.role === "system");
+  const contents = req.messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...(systemMsg ? { systemInstruction: { parts: [{ text: systemMsg.content }] } } : {}),
+      contents,
+    }),
+    signal: req.signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ProviderError(
+      classifyError({ message: `${res.status} ${text.slice(0, 200)}` }),
+      `Gemini call failed: ${res.status} ${text.slice(0, 200)}`,
+      provider.name,
+    );
+  }
+
+  const data = await res.json();
+  const content = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") ?? "";
+  return {
+    content,
+    model,
+    latencyMs: Date.now() - start,
+    tokensUsed: data?.usageMetadata?.totalTokenCount,
+  };
+}
+
+/**
+ * Call Anthropic Claude's messages endpoint.
+ */
+async function callClaude(
+  provider: Provider,
+  req: ProviderChatRequest,
+  model: string,
+  start: number,
+): Promise<ProviderChatResult> {
+  const endpoint = provider.apiEndpoint || "https://api.anthropic.com/v1/messages";
+  const systemMsg = req.messages.find((m) => m.role === "system");
+  const convoMessages = req.messages.filter((m) => m.role !== "system");
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": provider.apiKey!,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1024,
+      ...(systemMsg ? { system: systemMsg.content } : {}),
+      messages: convoMessages,
+    }),
+    signal: req.signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ProviderError(
+      classifyError({ message: `${res.status} ${text.slice(0, 200)}` }),
+      `Claude call failed: ${res.status} ${text.slice(0, 200)}`,
+      provider.name,
+    );
+  }
+
+  const data = await res.json();
+  const content = data?.content?.map((c: { text?: string }) => c.text).join("") ?? "";
+  return {
+    content,
+    model: data?.model ?? model,
+    latencyMs: Date.now() - start,
+    tokensUsed: data?.usage?.input_tokens + (data?.usage?.output_tokens ?? 0),
   };
 }
 
