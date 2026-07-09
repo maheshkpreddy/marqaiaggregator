@@ -1974,6 +1974,33 @@ function ProvidersPanel({
   const { toast } = useToast();
   const [editing, setEditing] = useState<Provider | null>(null);
   const [adding, setAdding] = useState(false);
+  const [healthChecking, setHealthChecking] = useState(false);
+
+  // Run a health check on mount so stale "down" errors from before a code
+  // fix are replaced with the current provider status.
+  const runHealthCheck = useCallback(async (silent = false) => {
+    setHealthChecking(true);
+    try {
+      const res = await fetch("/api/providers/health-check", { method: "POST" });
+      const data = await res.json();
+      if (!silent) {
+        toast({
+          title: "Health check complete",
+          description: `${data.healthy ?? 0} healthy, ${data.down ?? 0} down`,
+        });
+      }
+      onChanged();
+    } catch {
+      if (!silent) toast({ title: "Health check failed", variant: "destructive" });
+    } finally {
+      setHealthChecking(false);
+    }
+  }, [onChanged, toast]);
+
+  useEffect(() => {
+    runHealthCheck(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleActive = async (p: Provider) => {
     await fetch(`/api/providers/${p.id}`, {
@@ -2006,10 +2033,21 @@ function ProvidersPanel({
             Configure the AI providers Marq routes through. Lower priority = tried first in the failover chain.
           </p>
         </div>
-        <Button onClick={() => setAdding(true)} variant="outline" size="sm">
-          <Plus className="w-4 h-4 mr-2" />
-          Add Provider
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => runHealthCheck(false)}
+            variant="outline"
+            size="sm"
+            disabled={healthChecking}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${healthChecking ? "animate-spin" : ""}`} />
+            {healthChecking ? "Checking…" : "Refresh Health"}
+          </Button>
+          <Button onClick={() => setAdding(true)} variant="outline" size="sm">
+            <Plus className="w-4 h-4 mr-2" />
+            Add Provider
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-3">
