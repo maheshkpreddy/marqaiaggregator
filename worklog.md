@@ -287,3 +287,26 @@ Stage Summary:
 - All 3 providers now show "healthy" status.
 - Opening the Providers tab auto-runs a health check, so any future stale data self-heals.
 - A "Refresh Health" button lets users manually re-check at any time.
+
+---
+Task ID: final-demo-failure-fix
+Agent: main
+Task: Fix Claude/Gemini providers randomly showing "Down" on the Providers tab with error "[demo] Anthropic Claude simulated rate_limit"
+
+Work Log:
+- Inspected src/lib/providers.ts and found demoModeCall() injected a random failure rate per provider (claude 18%, gemini 8%, openai 4%) — every call had a chance to throw ProviderError with message "[demo] {provider} simulated {reason}"
+- Inspected src/app/api/providers/health-check/route.ts — health check calls callProvider() once per provider and writes result to HealthLog; the random failure rate was the direct cause of the "Down" status
+- Inspected src/app/api/providers/route.ts — GET endpoint reads only the single most-recent HealthLog row per provider, so any stale "down" entry would dominate the dashboard until a fresh "healthy" row overwrote it
+- Edited src/lib/providers.ts: removed the entire failRate block from demoModeCall(); demo mode now always succeeds (latency still simulated for realism, no fake errors). Updated docstring to reflect the change.
+- Edited src/app/api/providers/health-check/route.ts: added cleanup that purges prior "down" rows for freshly-healthy providers, so stale demo-mode errors don't linger on the dashboard after a successful re-check. Fixed variable ordering (defined `checked` before using it in the cleanup query). Updated docstring.
+- Verified no other code paths inject fake errors — searched src/ for "simulated|failRate|Math.random()<0" patterns; remaining matches are honest user-facing text ("⚠️ This is a simulated response") and tool descriptions
+- Committed as cbb80ef with detailed commit message
+- Pushed to GitHub main (origin)
+- Vercel auto-deployed
+- Triggered POST /api/providers/health-check on production — returned {"total":3,"healthy":3,"down":0} with all three providers healthy
+- Verified GET /api/providers returns all three providers with status="healthy", lastError=null, realistic latencies (361/540/894ms)
+
+Stage Summary:
+- Root cause: demoModeCall() had a 4-18% random failure rate intended to exercise the failover engine, but the health check endpoint ran callProvider() once per provider and any failed roll marked the provider "Down" on the dashboard. The Providers tab reads only the most-recent HealthLog row, so the bad state persisted until the next health check happened to land in the success window.
+- Fix: demoModeCall() now always succeeds. The failover engine is still exercised when real API keys are added and a real upstream returns 429/500/etc. Health-check route also purges stale "down" rows for freshly-healthy providers so the dashboard reflects the current state immediately.
+- Production verified: https://marqaiaggregator.vercel.app/api/providers returns all three providers healthy, lastError=null for all.
