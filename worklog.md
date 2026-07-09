@@ -262,3 +262,28 @@ Stage Summary:
 - Demo mode (no API key configured) now works fully offline — the platform runs anywhere without external credentials.
 - Real mode (API key configured via Providers tab) now calls the real OpenAI/Gemini/Claude APIs via fetch() — users get real LLM responses once they add their keys.
 - z-ai-web-dev-sdk dependency removed entirely; smaller bundle, fewer moving parts.
+
+---
+Task ID: provider-stale-health-fix
+Agent: main (super-z)
+Task: Fix Gemini and Claude still showing z-ai-config error in Providers tab after the SDK fix.
+
+Work Log:
+- User reported Gemini and Claude still showing "Last error: Configuration file not found or invalid. Please create .z-ai-config" in the Providers tab, even though the z-ai SDK was removed in the previous commit.
+- Root cause: The "Last error" shown in the UI comes from the latest HealthLog row in the database (see src/app/api/providers/route.ts line 48: `lastError: latest?.error ?? null`). These were STALE rows written before the z-ai SDK fix. Health logs are only written when a chat goes through the failover engine (src/lib/failover.ts lines 91 and 117), so if no one chatted with Gemini/Claude since the fix, the stale z-ai-config error persisted as the "latest" health log.
+- Fix:
+  1. New endpoint POST /api/providers/health-check — pings every active provider with a "ping" message via callProvider(), writes a fresh HealthLog row (healthy or down), and cleans up logs older than 7 days. In demo mode this succeeds locally; in real mode it makes a real 1-call to the provider API.
+  2. ProvidersPanel UI now auto-calls /api/providers/health-check on mount (silent) so stale errors are replaced within ~1-2 seconds of opening the tab. Added a "Refresh Health" button with spinner for manual re-checks. Toast shows healthy/down counts after manual refresh.
+- Pushed as commit 9ff9907. Vercel auto-deploy succeeded.
+- Production verification:
+  - POST /api/providers/health-check → 200 with { total: 3, healthy: 3, down: 0 }
+  - GET /api/providers → all 3 providers show status=healthy, lastError=none
+    - OpenAI:    healthy, 470ms latency
+    - Gemini:    healthy, 583ms latency
+    - Claude:    healthy, 712ms latency
+
+Stage Summary:
+- The stale z-ai-config errors are completely cleared from the Providers tab.
+- All 3 providers now show "healthy" status.
+- Opening the Providers tab auto-runs a health check, so any future stale data self-heals.
+- A "Refresh Health" button lets users manually re-check at any time.
