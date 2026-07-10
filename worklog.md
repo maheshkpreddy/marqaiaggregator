@@ -381,3 +381,39 @@ Stage Summary:
 - Searchable and filterable by category
 - Read-only — works for logged-out users
 - Sample prompts can be sent to chat with one click
+
+---
+Task ID: auto-failover-circuit-breaker
+Agent: main (super-z)
+Task: Make chat/agent modules auto-switch providers when one AI is down (circuit breaker + ultimate fallback + Auto mode)
+
+Work Log:
+- Reviewed existing failover infrastructure: src/lib/failover.ts already had runWithFailover() that iterates providers in priority order and falls over on error. Chat (/api/chat, /api/v1/chat/completions) and agent (src/lib/agent.ts) both already wired through it. So failover WAS implemented but had 4 gaps:
+  1. No circuit breaker — every request still tried the failed provider first, wasting the full 15-25s timeout.
+  2. No ultimate fallback — if all configured providers failed, user got a 502 error.
+  3. No health-aware ordering — recently-failed providers weren't deprioritized.
+  4. No "Auto" mode in the chat UI — user had to pin a specific provider.
+- Created src/lib/circuit-breaker.ts: per-provider in-memory breaker with CLOSED/OPEN/HALF_OPEN states. After 3 consecutive failures → OPEN for 60s. Half-open probe after cooldown. Exports shouldAttempt, recordSuccess, recordFailure, getBreakerSnapshot, resetBreaker, sortByBreakerStatus.
+- Rewrote src/lib/failover.ts:
+  * Providers re-ordered by breaker status before the loop (OPEN → back of queue).
+  * Each iteration checks shouldAttempt(); OPEN providers skipped + logged as 'skipped: circuit_open'.
+  * On success → recordSuccess (closes breaker). On failure → recordFailure (may open breaker).
+  * ULTIMATE FALLBACK: if every real provider fails (or is open), synthesizes a guaranteed demo-mode response from the original primary, prepended with a 'Live fallback triggered' banner. Outcome tagged with fallback=true.
+  * enableDemoFallback option (default true) lets /api/compare opt out to surface real failures.
+- Created src/app/api/circuit-breakers/route.ts: GET returns breaker state + latest health log per provider; POST resets one (providerId) or all breakers.
+- Updated src/app/api/chat/route.ts and src/app/api/v1/chat/completions/route.ts: response now includes 'fallback: boolean'.
+- Updated src/app/page.tsx (Chat UI):
+  * New "Auto" button at the start of the provider selector — when active, no primary is pinned, server picks the healthiest provider. Auto is the new default.
+  * Failover chain display switches to "Auto (healthiest provider first)" when Auto is selected.
+  * Two distinct banners: amber for normal failover, rose for ultimate fallback. Toasts also differentiate (destructive variant for fallback).
+  * ChatResponse type extended with 'skipped' on attempts and 'fallback' field.
+- TypeScript check (npx tsc --noEmit) clean.
+- Next.js production build (VERCEL=1 npx next build) succeeded — 32 routes (was 31, added /api/circuit-breakers).
+- Committed as 5b8ebdb, pushed to GitHub main. Vercel auto-deploy triggered.
+
+Stage Summary:
+- ✅ Circuit breaker prevents requests from wasting 15-25s timeouts on providers known to be down.
+- ✅ Ultimate demo fallback means users ALWAYS get an answer, even when every live provider fails (no more 502s in the chat tab).
+- ✅ "Auto" mode in chat UI lets Marq pick the healthiest provider transparently.
+- ✅ Both in-app chat (/api/chat) and external API (/api/v1/chat/completions) benefit from the same improvements.
+- ✅ Agent engine (src/lib/agent.ts) inherits all improvements automatically since it uses runWithFailover.
