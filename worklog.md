@@ -344,3 +344,40 @@ Stage Summary:
 - Agent fix: ReAct parser now receives properly-formatted responses in demo mode; every agent task completes in 2 steps (1 tool call + 1 final answer synthesis). Zero parse errors.
 - Provider expansion: 3 → 13 providers. Each has unique persona, demo response, default model, simulated latency, and a real-mode code path (OpenAI-compatible). Production DB seeded via Vercel build's seed step (idempotent upsert).
 - Comparison mode works across all 13 providers in parallel (1.2s total).
+
+---
+Task ID: provider-guide-tab
+Agent: main
+Task: Add a "Provider Guide" tab showing each provider's benefits, capabilities, sample prompts, and setup notes
+
+Work Log:
+- Explored existing UI structure: src/app/page.tsx has 9 tabs (chat, compare, prompts, agent, providers, health, failovers, org, apikeys) wired via Tabs/TabsTrigger/TabsContent from shadcn/ui
+- Created src/lib/provider-benefits.ts — data file with rich metadata for all 13 providers:
+  * 5 categories: frontier, open-source, local, specialized, orchestration
+  * Each provider has: tagline, icon, color, bestFor[], capabilities[], whenToUse[], limitations[], 3 samplePrompts[], setupNotes, pricingTier, docsUrl
+  * Exports PROVIDER_BENEFITS, PROVIDER_BENEFITS_MAP, getProviderBenefits(), CATEGORY_META
+- Created src/components/provider-guide-panel.tsx — UI panel:
+  * Search box (filters by name, tagline, bestFor, capabilities, whenToUse)
+  * Category filter chips (All + 5 categories with counts)
+  * Provider cards grouped by category, each showing: colored icon, name, tagline, top-3 bestFor chips
+  * Expand button reveals: full bestFor list, capabilities, whenToUse, limitations, 3 sample prompts with 'Use in Chat' + 'Copy' buttons, setup notes, pricing tier, docs link
+  * 'Use in Chat' wires back to chat input via onUsePrompt callback
+- Modified src/app/page.tsx:
+  * Added BookOpen to lucide-react imports
+  * Added 'guide' to the tab state union type
+  * Added Guide TabsTrigger (with BookOpen icon) between Providers and Health
+  * Added Guide TabsContent rendering ProviderGuidePanel with onUsePrompt callback that sets chat input and switches to chat tab
+- Verified: npx tsc --noEmit clean, npx next build succeeds
+- Committed as a10a77f, pushed to GitHub main, Vercel auto-deployed
+- Smoke tests on production:
+  * GET / returns 200
+  * POST /api/providers/health-check: 13/13 healthy
+  * POST /api/agent/tasks: status=completed in 2 steps (no regression)
+  * Login flow works
+
+Stage Summary:
+- New "Guide" tab live at https://marqaiaggregator.vercel.app — between Providers and Health
+- Each of the 13 providers has a card with: tagline, 5 bestFor bullets, 5 capabilities, 4 when-to-use, 3 limitations, 3 sample prompts (with Use in Chat + Copy buttons), setup notes, pricing, and docs link
+- Searchable and filterable by category
+- Read-only — works for logged-out users
+- Sample prompts can be sent to chat with one click
