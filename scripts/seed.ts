@@ -57,10 +57,10 @@ async function main() {
     {
       name: "gemini",
       displayName: "Google Gemini",
-      description: "Gemini 2.0 Flash, Gemini 1.5 Pro. Long-context multimodal reasoning, strong at grounded factual answers and code.",
+      description: "Gemini 2.5 Flash, Gemini 2.5 Pro. Long-context multimodal reasoning, strong at grounded factual answers and code.",
       apiEndpoint: "https://generativelanguage.googleapis.com/v1beta/models",
       apiKey: null,
-      models: JSON.stringify(["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"]),
+      models: JSON.stringify(["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash-lite"]),
       active: true,
       priority: 1,
       color: "#4285f4",

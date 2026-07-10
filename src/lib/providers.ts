@@ -55,12 +55,33 @@ export class ProviderError extends Error {
 
 /**
  * Map an HTTP status / error pattern to a FailoverReason.
+ *
+ * Handles three input shapes:
+ *  - Error instances (uses .message)
+ *  - Plain objects with a string `message` property (e.g. `{ message: "429 ..." }`
+ *    which is how callOpenAICompatible / callGemini / callClaude pass the HTTP
+ *    status + response body to classifyError)
+ *  - Anything else (falls back to String(err))
  */
 export function classifyError(err: unknown): FailoverReason {
-  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  let msg: string;
+  if (err instanceof Error) {
+    msg = err.message.toLowerCase();
+  } else if (typeof err === "object" && err !== null && "message" in err) {
+    const m = (err as { message: unknown }).message;
+    msg = typeof m === "string" ? m.toLowerCase() : String(err).toLowerCase();
+  } else {
+    msg = String(err).toLowerCase();
+  }
+
   if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("aborted")) return "timeout";
   if (msg.includes("rate") && msg.includes("limit")) return "rate_limit";
   if (msg.includes("429")) return "rate_limit";
+  // Billing / quota / credit errors — the API key is valid but the account
+  // can't be billed right now. Classify as rate_limit so the failover engine
+  // moves on to the next provider instead of treating it as an auth error
+  // (which would be misleading — the key works, the wallet is just empty).
+  if (msg.includes("quota") || msg.includes("credit balance") || msg.includes("billing") || msg.includes("insufficient")) return "rate_limit";
   if (msg.includes("auth") || msg.includes("401") || msg.includes("api key") || msg.includes("unauthorized")) return "auth_error";
   if (msg.includes("network") || msg.includes("fetch") || msg.includes("econn")) return "network";
   if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("server")) return "server_error";
@@ -914,7 +935,7 @@ function personaFor(name: string): string {
 export function defaultModelFor(providerName: string): string {
   switch (providerName) {
     case "openai": return "gpt-4o-mini";
-    case "gemini": return "gemini-2.0-flash";
+    case "gemini": return "gemini-2.5-flash";
     case "claude": return "claude-3-5-sonnet";
     case "grok": return "grok-2";
     case "huggingface": return "meta-llama/Llama-3.1-8B-Instruct";
