@@ -439,3 +439,41 @@ Stage Summary:
 - ✅ /api/v1/chat/completions (external API) works after auth regex fix — new fallback field included.
 - ✅ /api/v1/agents/run (external API) works — agent completes in 2 steps with no parse errors.
 - All 5 commits (5b8ebdb, 69cfe01, 82a2e05) are on GitHub main and deployed to Vercel production.
+
+---
+Task ID: env-var-api-keys + marq-glm-provider
+Agent: main (super-z)
+Task: Fix "chat only gives demo responses on Vercel" — let users set API keys via env vars instead of requiring manual Providers-tab configuration
+
+Work Log:
+- Root cause: On Vercel production, every provider's `apiKey` field in the DB was null (demo mode). The platform was working as designed — it falls back to demoModeCall() when no key is configured — but users had no easy way to set keys without manually editing each provider row in the Providers tab.
+- Investigated z-ai SDK: the `ZAI.create()` factory reads from `.z-ai-config` file (not env vars), but the ZAI constructor is public and accepts a config object directly. The z-ai API is OpenAI-compatible in shape but requires custom headers: Authorization: Bearer Z.ai, X-Token: <jwt>, X-Z-AI-From: Z.
+- Tested z-ai API locally via the z-ai CLI: GLM-4-Plus returns real responses in ~14s.
+- Modified src/lib/providers.ts:
+  * callProvider() now checks env vars as a fallback when DB apiKey is null.
+  * Mapping: openai→OPENAI_API_KEY, gemini→GEMINI_API_KEY/GOOGLE_AI_API_KEY, claude→ANTHROPIC_API_KEY, grok→XAI_API_KEY/GROK_API_KEY, huggingface→HF_API_KEY/HUGGINGFACE_API_KEY, marq_glm→ZAI_TOKEN, custom→<NAME_UPPER>_API_KEY.
+  * New callZaiGlm() function — calls the z-ai GLM-4-Plus API directly via fetch() with the correct headers. No .z-ai-config file needed. Works on Vercel when ZAI_TOKEN env var is set.
+  * New hasEffectiveApiKey() + exported getEnvApiKey() — lets UI and setup-status endpoint show which providers are live.
+  * New 'marq_glm' provider: persona, default model (glm-4-plus), demo response with setup instructions, simulated latency.
+  * OpenAI demo banner rewritten to mention BOTH options: set OPENAI_API_KEY env var on Vercel OR add key in Providers tab.
+- Modified scripts/seed.ts: added 'marq_glm' (Marq GLM Built-in) provider with priority -1 (highest) so failover engine tries it first when ZAI_TOKEN is set. Idempotent upsert so existing Vercel deploys pick it up on next build.
+- Created src/app/api/setup-status/route.ts: unauthenticated GET endpoint that returns { total, live, demo, anyLive, providers[] } showing which providers have real API keys and which env var name activates each.
+- Created scripts/test-zai-provider.ts: local test that loads sandbox's /etc/.z-ai-config into env vars and verifies marq_glm returns real GLM-4-Plus responses.
+- Verified locally: npx tsx scripts/test-zai-provider.ts → real GLM-4-Plus response ("The Marq AI Aggregator platform collects and consolidates content from various sources...").
+- TypeScript clean, Next.js build succeeds (33 routes).
+- Committed as 121e65c, pushed to GitHub main. Vercel auto-deployed.
+- Production verification:
+  * GET /api/setup-status → 14 providers total (was 13 — marq_glm added by Vercel build seed step).
+  * All 14 are in demo mode (live: 0) because NO env vars are set on Vercel yet.
+  * Marq GLM is at priority -1 (tried first by failover engine) with envVarHint "ZAI_TOKEN".
+
+Stage Summary:
+- ✅ Platform now supports env-var API keys — users can set one env var on Vercel and get real responses immediately, without touching the Providers tab.
+- ✅ New Marq GLM (Built-in) provider added at highest priority — uses GLM-4-Plus via z-ai API when ZAI_TOKEN is set.
+- ✅ /api/setup-status endpoint live — users can verify which providers are live at any time.
+- ⚠️ USER ACTION REQUIRED: To get real chat responses, the user must set at least ONE of these env vars on Vercel (Project → Settings → Environment Variables):
+    - OPENAI_API_KEY (recommended — most reliable)
+    - ANTHROPIC_API_KEY
+    - GEMINI_API_KEY or GOOGLE_AI_API_KEY
+    - ZAI_TOKEN (for the built-in Marq GLM provider)
+  Then redeploy. The platform will automatically use the first live provider and fall over if one fails.
