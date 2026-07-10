@@ -25,6 +25,7 @@ import type { Provider, ChatMessage } from "@/lib/providers";
 import {
   callProvider,
   classifyError,
+  hasEffectiveApiKey,
   ProviderError,
   type ProviderChatRequest,
   type ProviderChatResult,
@@ -41,10 +42,10 @@ export interface FailoverAttempt {
   providerId: string;
   providerName: string;
   success: boolean;
-  reason?: FailoverReason | "circuit_open";
+  reason?: FailoverReason | "circuit_open" | "no_api_key";
   errorMessage?: string;
   latencyMs?: number;
-  skipped?: boolean; // true if skipped due to open circuit breaker
+  skipped?: boolean; // true if skipped due to open circuit breaker OR no API key
 }
 
 export interface FailoverOutcome {
@@ -129,6 +130,21 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
       continue;
     }
 
+    // No-API-key skip: if this provider has no real API key (neither in the
+    // DB nor in env vars), skip it instead of falling into demo mode. This
+    // is critical because demo mode ALWAYS succeeds, which would mask any
+    // live providers further down the priority list. By skipping demo-only
+    // providers here, the failover engine moves on to providers that CAN
+    // return real responses. If ALL providers are demo-only, the ultimate
+    // demo fallback at the bottom of this function kicks in.
+    if (!hasEffectiveApiKey(provider)) {
+      attempt.skipped = true;
+      attempt.reason = "no_api_key";
+      attempt.errorMessage = `No API key configured for ${provider.displayName} — skipping (demo mode).`;
+      attempts.push(attempt);
+      continue;
+    }
+
     try {
       const req: ProviderChatRequest = {
         messages,
@@ -163,7 +179,13 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
         attempts,
         finalProviderId: provider.id,
         finalProviderName: provider.displayName,
-        failedOver: provider.id !== originalProviderId,
+        // "failedOver" should mean a real provider was attempted and failed,
+        // NOT that a demo-only provider was silently skipped. Skipping a
+        // provider with no API key is normal auto-selection, not a failure
+        // event — so we only flag failover when the original primary was
+        // actually ATTEMPTED (not skipped) and didn't produce this result.
+        failedOver: provider.id !== originalProviderId &&
+          attempts.some((a) => a.providerId === originalProviderId && !a.success && !a.skipped),
         originalProviderId,
       };
       break;
@@ -190,9 +212,13 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
       // If this provider failed AND there's another provider to try,
       // record the failover transition: provider[i] → provider[i+1].
       if (i < orderedProviders.length - 1) {
-        // Find the next provider we'll actually attempt (skip open-circuit ones).
+        // Find the next provider we'll actually attempt — skip both
+        // open-circuit providers AND providers with no API key (both
+        // are guaranteed to be skipped at the top of the next loop).
         let nextIdx = i + 1;
-        while (nextIdx < orderedProviders.length && !shouldAttempt(orderedProviders[nextIdx].id)) {
+        while (nextIdx < orderedProviders.length &&
+               (!shouldAttempt(orderedProviders[nextIdx].id) ||
+                !hasEffectiveApiKey(orderedProviders[nextIdx]))) {
           nextIdx++;
         }
         if (nextIdx < orderedProviders.length) {
@@ -293,13 +319,16 @@ async function synthesizeDemoFallback(
   const result = await callProvider(demoProvider, req);
 
   // Prepend a fallback banner so the user knows why they're seeing this.
-  const failedNames = attempts
-    .filter((a) => !a.success && !a.skipped)
+  // Count both failed AND skipped attempts (e.g. all providers had no API
+  // key) so the banner is accurate in the all-demo-only case.
+  const unavailableNames = attempts
+    .filter((a) => !a.success)
     .map((a) => a.providerName)
     .slice(0, 3);
+  const unavailableCount = attempts.filter((a) => !a.success).length;
   const banner = [
-    `> ⚠️ **Live fallback triggered** — ${failedNames.length} provider(s) failed (${failedNames.join(", ")}).`,
-    `> Showing a simulated response so you still get an answer. Try again in a moment, or check the **Providers** tab.`,
+    `> ⚠️ **Live fallback triggered** — ${unavailableCount} provider(s) unavailable (${unavailableNames.join(", ")}).`,
+    `> Showing a simulated response so you still get an answer. Add a real API key in the **Providers** tab or via env vars to get live responses.`,
     ``,
   ].join("\n");
 
