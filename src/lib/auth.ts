@@ -229,7 +229,8 @@ export async function authApiKey(
   requiredScope: Scope,
 ): Promise<ApiKeyContext | NextResponse> {
   const authHeader = req.headers.get("authorization") ?? "";
-  const m = authHeader.match(/^Bearer\s+(marq_live_[a-zA-Z0-9]+)$/i);
+  // base64url tokens can contain A-Z, a-z, 0-9, -, and _ (after the marq_live_ prefix).
+  const m = authHeader.match(/^Bearer\s+(marq_live_[A-Za-z0-9_-]+)$/i);
   if (!m) {
     return NextResponse.json(
       { error: "Unauthorized", detail: "Missing or malformed Bearer token. Expected: Bearer marq_live_..." },
