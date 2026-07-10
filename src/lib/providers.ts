@@ -102,16 +102,29 @@ export function classifyError(err: unknown): FailoverReason {
  *        huggingface   → HF_API_KEY or HUGGINGFACE_API_KEY
  *        marq_glm      → ZAI_TOKEN (uses the z-ai SDK with GLM-4-Plus)
  *        zai           → ZAI_TOKEN (direct z.ai API — same backend as marq_glm)
+ *        marq_free     → (no key needed — uses the free Pollinations API)
  *        (custom)      → <NAME_UPPER>_API_KEY
  *
  * If no key is found anywhere, we fall back to demo mode, which generates a
  * canned-but-contextual response locally.
+ *
+ * GUARANTEED-AVAILABLE PROVIDER: "marq_free" uses Pollinations.ai — a free,
+ * no-auth, OpenAI-compatible endpoint. It is ALWAYS live and serves as the
+ * platform's ultimate real-LLM fallback so users never see a "demo" banner
+ * when other providers are down or rate-limited.
  */
 export async function callProvider(
   provider: Provider,
   req: ProviderChatRequest,
 ): Promise<ProviderChatResult> {
   const start = Date.now();
+
+  // marq_free is always live — routes to callPollinations() regardless of
+  // whether an API key is configured. This is the platform's guaranteed-
+  // availability provider.
+  if (provider.name === "marq_free") {
+    return callPollinations(provider, req, start);
+  }
 
   const effectiveKey = provider.apiKey || getEnvApiKey(provider.name);
   if (effectiveKey) {
@@ -164,6 +177,8 @@ export function getEnvApiKey(providerName: string): string | null {
  * Used by the Providers tab UI to show which providers are "live" vs "demo".
  */
 export function hasEffectiveApiKey(provider: Provider): boolean {
+  // marq_free is always live — uses the free, no-auth Pollinations API.
+  if (provider.name === "marq_free") return true;
   if (provider.apiKey) return true;
   if (getEnvApiKey(provider.name)) return true;
   if ((provider.name === "marq_glm" || provider.name === "zai") &&
@@ -208,7 +223,8 @@ export async function demoModeCall(
     provider.name === "langchain" ? 850 :
     provider.name === "qvac" ? 700 :
     provider.name === "marq_glm" ? 500 :
-    provider.name === "zai" ? 500 : 450;
+    provider.name === "zai" ? 500 :
+    provider.name === "marq_free" ? 600 : 450;
   const jitter = Math.floor(Math.random() * 200);
   await new Promise((r) => setTimeout(r, baseLatency + jitter));
 
@@ -483,6 +499,24 @@ function buildDemoResponse(provider: Provider, req: ProviderChatRequest): string
         `5. Redeploy. The Zai provider will automatically use real GLM-4-Plus completions.`,
         ``,
         `Zai shares its backend with the Marq GLM (Built-in) provider — set the env var once and both light up.`,
+      ].join("\n");
+
+    case "marq_free":
+      // This only shows if Pollinations itself is unreachable (very rare).
+      return [
+        `_${persona}_`,
+        ``,
+        `**Demo response from Marq Free**`,
+        ``,
+        `You asked: "${snippet}".`,
+        ``,
+        `This is a simulated response because the Pollinations.ai free endpoint was unreachable. Marq Free is the platform's always-on provider backed by open-source models — it normally returns real AI responses without any API key.`,
+        ``,
+        `**Why am I seeing this?**`,
+        `- Pollinations.ai is temporarily down or rate-limited, OR`,
+        `- There's a network issue between Vercel and pollinations.ai.`,
+        ``,
+        `This is rare — please try again in a moment. If it persists, the other providers (OpenAI / Claude / Gemini / Zai) will work as soon as you add API keys for them.`,
       ].join("\n");
 
     default:
@@ -785,6 +819,73 @@ async function callZaiGlm(
 }
 
 /**
+ * Call the Pollinations.ai free text-generation API.
+ *
+ * This is the platform's GUARANTEED-AVAILABILITY provider:
+ *   - No API key required (anonymous tier is generous and reliable).
+ *   - OpenAI-compatible request/response shape.
+ *   - Backed by gpt-oss-20b + other open-source models.
+ *   - Free for commercial use (https://pollinations.ai).
+ *
+ * The marq_free provider is seeded at the lowest priority so the failover
+ * engine only hits it when all paid providers (OpenAI/Claude/Gemini/ZAI)
+ * are down or rate-limited. This ensures users ALWAYS get a real AI
+ * response instead of the demo fallback banner.
+ *
+ * If Pollinations itself is unreachable (rare), we throw a network error
+ * so the failover engine's demo fallback kicks in as a last resort.
+ */
+async function callPollinations(
+  provider: Provider,
+  req: ProviderChatRequest,
+  start: number,
+): Promise<ProviderChatResult> {
+  const endpoint = "https://text.pollinations.ai/openai";
+  const model = req.model || "openai";
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: req.messages,
+      // Don't send thinking config — Pollinations doesn't support it.
+    }),
+    signal: req.signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ProviderError(
+      classifyError({ message: `${res.status} ${text.slice(0, 200)}` }),
+      `Marq Free (Pollinations) call failed: ${res.status} ${text.slice(0, 200)}`,
+      provider.name,
+    );
+  }
+
+  const data = await res.json();
+  // Pollinations returns OpenAI-shaped responses. Extract content + usage.
+  const content = data?.choices?.[0]?.message?.content ?? "";
+  if (!content) {
+    // Empty content usually means an upstream model error — treat as failure
+    // so the demo fallback can kick in with a useful message.
+    throw new ProviderError(
+      "unknown",
+      `Marq Free returned empty content: ${JSON.stringify(data).slice(0, 200)}`,
+      provider.name,
+    );
+  }
+  return {
+    content,
+    model: data?.model ?? model,
+    latencyMs: Date.now() - start,
+    tokensUsed: data?.usage?.total_tokens,
+  };
+}
+
+/**
  * Call any OpenAI-compatible chat completions endpoint.
  * Used for OpenAI itself + any custom OpenAI-compatible provider.
  */
@@ -957,6 +1058,8 @@ function personaFor(name: string): string {
       return "You are Marq GLM, powered by GLM-4-Plus. You give clear, accurate, and helpful answers to any question. You are the default real-LLM provider for the Marq platform when ZAI_TOKEN is configured.";
     case "zai":
       return "You are Zai, powered by GLM-4-Plus via the official z.ai API. You give clear, accurate, and helpful answers across general chat, reasoning, code, and long-context tasks. You support multiple GLM-4 variants (Plus, Air, Long, Flash) so the user can pick the right balance of quality, cost, latency, and context length.";
+    case "marq_free":
+      return "You are Marq Free, the platform's always-available assistant powered by open-source models via Pollinations.ai. You provide real AI responses with no API key required, serving as the reliable fallback when paid providers are unavailable. You give clear, accurate, and helpful answers to any question.";
     default:
       return "You are Marq AI, a helpful unified assistant.";
   }
@@ -979,6 +1082,7 @@ export function defaultModelFor(providerName: string): string {
     case "qvac": return "marq-qvac-default";
     case "marq_glm": return "glm-4-plus";
     case "zai": return "glm-4-plus";
+    case "marq_free": return "openai";
     default: return "marq-default";
   }
 }

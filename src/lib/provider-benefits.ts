@@ -685,6 +685,53 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     pricingTier: "Pay-as-you-go per token. GLM-4-Flash is the cheapest variant; GLM-4-Plus is the premium tier.",
     docsUrl: "https://docs.z.ai",
   },
+
+  {
+    name: "marq_free",
+    displayName: "Marq Free (Always-On)",
+    tagline: "The platform's guaranteed-availability fallback — free, no API key, never rate-limited. Powered by Pollinations.ai.",
+    icon: "Shield",
+    color: "#10b981",
+    category: "open-source",
+    bestFor: [
+      "Guaranteed real-AI responses when every paid provider is down or rate-limited",
+      "Zero-config deployment — works immediately on fresh Vercel deploys with no env vars",
+      "Cost-free development and prototyping with no API key management",
+      "Educational use cases where reliability matters more than frontier-grade quality",
+      "Quick smoke-tests of the chat and agent pipelines without spending tokens",
+    ],
+    capabilities: [
+      "OpenAI-compatible chat completions via the Pollinations.ai public endpoint",
+      "Multiple open-source models: gpt-oss-20b (default), openai-large, mistral, qwen-coder",
+      "Always-on availability — no API key, no rate limits, no billing",
+      "Sits at the lowest priority so premium providers are tried first",
+      "Kicks in automatically when OpenAI/Claude/Gemini/ZAI are all unavailable",
+    ],
+    whenToUse: [
+      "You want the platform to NEVER throw an error, even when 3-4 paid providers fail simultaneously",
+      "You're testing the platform for the first time and haven't added any API keys yet",
+      "You want a real AI response (not a demo banner) during provider outages",
+      "You're building a demo or proof-of-concept and want zero ongoing API costs",
+    ],
+    limitations: [
+      "Open-source models — quality is below GPT-4o / Claude 3.5 / Gemini 2.5 Pro",
+      "No tool-use / function-calling support — pure text in, text out",
+      "Higher latency than dedicated providers (load-balanced public endpoint)",
+      "Not recommended for production workloads with strict SLAs — pair with a paid provider as primary",
+    ],
+    samplePrompts: [
+      "Hi! Just say hello back.",
+      "What's the capital of France? Answer in one sentence.",
+      "Explain what an API gateway is in 3 bullet points.",
+    ],
+    setupNotes:
+      "No setup required. Marq Free is always live and works out of the box. It uses the free, no-auth " +
+      "Pollinations.ai public endpoint (https://text.pollinations.ai/openai). The provider is seeded at " +
+      "priority 100 (lowest) so the failover engine only falls back to it when all paid providers fail — " +
+      "ensuring users always get a real AI response instead of the demo banner.",
+    pricingTier: "Free. No API key, no rate limits, no billing.",
+    docsUrl: "https://pollinations.ai",
+  },
 ];
 
 /** Quick lookup by provider name. */

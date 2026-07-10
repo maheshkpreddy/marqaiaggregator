@@ -225,6 +225,21 @@ async function main() {
       color: "#0ea5e9",
       icon: "sparkles",
     },
+    {
+      name: "marq_free",
+      displayName: "Marq Free (Always-On)",
+      description:
+        "Marq Free — the platform's GUARANTEED-AVAILABILITY provider backed by Pollinations.ai. " +
+        "No API key required, no rate limits to worry about. Uses open-source models (gpt-oss-20b and others) to deliver real AI responses when every paid provider is down or rate-limited. " +
+        "Seeded at the lowest priority so the failover engine only falls back to it when OpenAI/Claude/Gemini/ZAI are all unavailable — ensuring the platform NEVER throws an error to the user.",
+      apiEndpoint: "https://text.pollinations.ai/openai",
+      apiKey: null, // No key needed — Pollinations has a free anonymous tier.
+      models: JSON.stringify(["openai", "openai-large", "mistral", "qwen-coder"]),
+      active: true,
+      priority: 100, // Lowest priority — tried last before the demo fallback.
+      color: "#10b981",
+      icon: "shield",
+    },
   ];
 
   for (const p of providers) {

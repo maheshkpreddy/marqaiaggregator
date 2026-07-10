@@ -26,6 +26,18 @@ export async function GET() {
   });
 
   const result = providers.map((p) => {
+    // marq_free is always live — uses Pollinations.ai free no-auth endpoint.
+    if (p.name === "marq_free") {
+      return {
+        id: p.id,
+        name: p.name,
+        displayName: p.displayName,
+        priority: p.priority,
+        isLive: true,
+        keySource: "always_on" as const,
+        envVarHint: null,
+      };
+    }
     const envKey = getEnvApiKey(p.name);
     const hasDbKey = !!p.apiKey;
     const hasEnvKey = !!envKey;
