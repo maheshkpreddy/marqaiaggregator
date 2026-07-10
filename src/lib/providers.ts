@@ -758,7 +758,23 @@ async function callZaiGlm(
     );
   }
 
+  // The Z.ai API returns HTTP 200 even for auth failures, with a body like:
+  //   {"code":1000,"msg":"Authentication Failed","success":false}
+  //   {"code":401,"msg":"token expired or incorrect","success":false}
+  // Detect this shape and throw so the failover engine can move on to the
+  // next provider (or the demo fallback) instead of returning empty content.
   const data = await res.json();
+  if (data && typeof data === "object" && data.success === false) {
+    const msg = typeof data.msg === "string" ? data.msg : "Z.ai API returned success=false";
+    const code = typeof data.code === "number" ? data.code : "?";
+    throw new ProviderError(
+      // code 401 → auth_error, code 1000/1001 → auth_error, otherwise unknown
+      code === 401 || code === 1000 || code === 1001 ? "auth_error" : "unknown",
+      `Marq GLM auth/API error (code ${code}): ${msg}`,
+      provider.name,
+    );
+  }
+
   const content = data?.choices?.[0]?.message?.content ?? "";
   return {
     content,
