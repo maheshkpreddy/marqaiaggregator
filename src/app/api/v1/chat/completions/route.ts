@@ -142,6 +142,7 @@ export async function POST(req: NextRequest) {
             })()
           : null,
         failedOver: outcome.failedOver,
+        fallback: outcome.fallback ?? false,
         attempts: outcome.attempts,
         latencyMs: outcome.result.latencyMs,
         sessionId: session.id,

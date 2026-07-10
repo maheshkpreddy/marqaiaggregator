@@ -1,9 +1,23 @@
 /**
- * Marq AI Aggregator - Failover Engine
+ * Marq AI Aggregator — Failover Engine
  *
  * Given a list of providers in priority order, tries each one until a
- * successful response is returned. On failure, classifies the error,
- * logs the failover, and moves to the next provider.
+ * successful response is returned. On failure:
+ *   1. Classifies the error.
+ *   2. Logs the failure to HealthLog + FailoverLog (DB).
+ *   3. Records the failure in the in-memory circuit breaker so the next
+ *      request can skip this provider for `COOLDOWN_MS` instead of waiting
+ *      the full timeout again.
+ *   4. Moves to the next provider.
+ *
+ * Additionally, providers are re-ordered by circuit-breaker status before
+ * the loop runs: OPEN providers (recently failing) are sent to the back so
+ * the request prefers healthy providers first.
+ *
+ * ULTIMATE FALLBACK: If every configured provider fails, the engine falls
+ * back to a guaranteed demo-mode response from the original primary so the
+ * user ALWAYS gets an answer instead of a 502 error. The result is tagged
+ * with `failedOver=true, fallback=true` so the UI can show a warning.
  */
 
 import { db } from "@/lib/db";
@@ -16,14 +30,21 @@ import {
   type ProviderChatResult,
   type FailoverReason,
 } from "@/lib/providers";
+import {
+  shouldAttempt,
+  recordSuccess,
+  recordFailure,
+  sortByBreakerStatus,
+} from "@/lib/circuit-breaker";
 
 export interface FailoverAttempt {
   providerId: string;
   providerName: string;
   success: boolean;
-  reason?: FailoverReason;
+  reason?: FailoverReason | "circuit_open";
   errorMessage?: string;
   latencyMs?: number;
+  skipped?: boolean; // true if skipped due to open circuit breaker
 }
 
 export interface FailoverOutcome {
@@ -33,6 +54,8 @@ export interface FailoverOutcome {
   finalProviderName: string;
   failedOver: boolean;
   originalProviderId: string;
+  /** True if the response came from the ultimate demo fallback (all real providers failed). */
+  fallback?: boolean;
 }
 
 export interface FailoverOptions {
@@ -44,30 +67,67 @@ export interface FailoverOptions {
   signal?: AbortSignal;
   /** Per-provider timeout in ms (default 15s). */
   timeoutMs?: number;
+  /**
+   * If true (default), the engine falls back to a guaranteed demo-mode
+   * response when all real providers fail. Set to false to get the original
+   * 502-on-total-failure behavior (used by the comparison endpoint where we
+   * want to surface real failures).
+   */
+  enableDemoFallback?: boolean;
 }
 
 /**
- * Run the failover loop. Always tries providers in the given priority order.
- * Returns the first successful response and a structured log of every attempt.
+ * Run the failover loop. Always tries providers in the given priority order
+ * (after circuit-breaker re-ordering). Returns the first successful response
+ * and a structured log of every attempt.
+ *
+ * If every provider fails AND `enableDemoFallback` is true (default), the
+ * engine synthesizes a guaranteed demo-mode response so the user always gets
+ * an answer — the UI can show a banner explaining the response is a fallback.
  */
 export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOutcome> {
-  const { providers, messages, model, sessionId, signal, timeoutMs = 15000 } = opts;
+  const {
+    providers,
+    messages,
+    model,
+    sessionId,
+    signal,
+    timeoutMs = 15000,
+    enableDemoFallback = true,
+  } = opts;
 
   if (providers.length === 0) {
     throw new Error("No providers configured for failover.");
   }
 
-  const attempts: FailoverAttempt[] = [];
   const originalProviderId = providers[0].id;
+
+  // Re-order providers: push OPEN-circuit providers to the back so we try
+  // healthy ones first. CLOSED / HALF_OPEN keep their relative order.
+  // The originally-pinned primary stays first if its breaker is not open.
+  const orderedProviders = sortByBreakerStatus(providers);
+
+  const attempts: FailoverAttempt[] = [];
   let outcome: FailoverOutcome | null = null;
 
-  for (let i = 0; i < providers.length; i++) {
-    const provider = providers[i];
+  for (let i = 0; i < orderedProviders.length; i++) {
+    const provider = orderedProviders[i];
     const attempt: FailoverAttempt = {
       providerId: provider.id,
       providerName: provider.displayName,
       success: false,
     };
+
+    // Circuit-breaker skip: if the breaker is OPEN and we haven't reached
+    // cooldown yet, skip this provider entirely. We still record an attempt
+    // entry so the UI / logs can show "skipped (circuit open)".
+    if (!shouldAttempt(provider.id)) {
+      attempt.skipped = true;
+      attempt.reason = "circuit_open";
+      attempt.errorMessage = `Circuit breaker open — skipping ${provider.displayName} for now.`;
+      attempts.push(attempt);
+      continue;
+    }
 
     try {
       const req: ProviderChatRequest = {
@@ -76,7 +136,6 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
         signal,
       };
 
-      // Race the call against a timeout for this attempt.
       const result = await withTimeout(
         callProvider(provider, req),
         timeoutMs,
@@ -86,6 +145,9 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
       attempt.success = true;
       attempt.latencyMs = result.latencyMs;
       attempts.push(attempt);
+
+      // Tell the breaker this provider is healthy.
+      recordSuccess(provider.id);
 
       // Record health log for the successful provider.
       await db.healthLog.create({
@@ -101,7 +163,7 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
         attempts,
         finalProviderId: provider.id,
         finalProviderName: provider.displayName,
-        failedOver: i > 0,
+        failedOver: provider.id !== originalProviderId,
         originalProviderId,
       };
       break;
@@ -112,6 +174,9 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
       attempt.reason = reason;
       attempt.errorMessage = errorMessage;
       attempts.push(attempt);
+
+      // Tell the breaker this provider failed (it may transition to OPEN).
+      recordFailure(provider.id);
 
       // Record health log for the failed provider.
       await db.healthLog.create({
@@ -124,31 +189,125 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
 
       // If this provider failed AND there's another provider to try,
       // record the failover transition: provider[i] → provider[i+1].
-      if (i < providers.length - 1) {
-        const nextProvider = providers[i + 1];
-        await db.failoverLog.create({
-          data: {
-            fromProviderId: provider.id,
-            toProviderId: nextProvider.id,
-            reason,
-            errorMessage: errorMessage.slice(0, 500),
-            sessionId: sessionId ?? null,
-          },
-        }).catch(() => {/* ignore db logging errors */});
+      if (i < orderedProviders.length - 1) {
+        // Find the next provider we'll actually attempt (skip open-circuit ones).
+        let nextIdx = i + 1;
+        while (nextIdx < orderedProviders.length && !shouldAttempt(orderedProviders[nextIdx].id)) {
+          nextIdx++;
+        }
+        if (nextIdx < orderedProviders.length) {
+          const nextProvider = orderedProviders[nextIdx];
+          await db.failoverLog.create({
+            data: {
+              fromProviderId: provider.id,
+              toProviderId: nextProvider.id,
+              reason,
+              errorMessage: errorMessage.slice(0, 500),
+              sessionId: sessionId ?? null,
+            },
+          }).catch(() => {/* ignore db logging errors */});
+        }
       }
+      // Continue to next iteration — try the next provider.
+    }
+  }
 
-      // Auth errors usually mean the key is bad — we can still try the next provider.
-      // Continue to next iteration.
+  // No provider succeeded. Fall back to demo mode for the original primary
+  // so the user ALWAYS gets an answer. Mark the result clearly so the UI can
+  // show a warning ("All live providers failed — showing fallback response").
+  if (!outcome && enableDemoFallback) {
+    const fallbackProvider = orderedProviders.find((p) => p.id === originalProviderId)
+      ?? orderedProviders[0];
+
+    try {
+      const fallbackResult = await synthesizeDemoFallback(
+        fallbackProvider,
+        messages,
+        model,
+        attempts,
+      );
+
+      // Log that we used the ultimate fallback (best-effort).
+      await db.healthLog.create({
+        data: {
+          providerId: fallbackProvider.id,
+          status: "degraded",
+          error: `Ultimate fallback used: all ${attempts.filter(a => !a.skipped).length} attempted providers failed.`,
+        },
+      }).catch(() => {/* ignore db logging errors */});
+
+      outcome = {
+        result: fallbackResult,
+        attempts,
+        finalProviderId: fallbackProvider.id,
+        finalProviderName: fallbackProvider.displayName,
+        failedOver: true,
+        originalProviderId,
+        fallback: true,
+      };
+    } catch (err) {
+      // Even the fallback failed — this should never happen, but bail out.
+      throw new Error(
+        `All ${orderedProviders.length} providers failed AND the demo fallback crashed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 
   if (!outcome) {
     throw new Error(
-      `All ${providers.length} providers failed. Last error: ${attempts[attempts.length - 1]?.errorMessage ?? "unknown"}`,
+      `All ${orderedProviders.length} providers failed. Last error: ${attempts[attempts.length - 1]?.errorMessage ?? "unknown"}`,
     );
   }
 
   return outcome;
+}
+
+/**
+ * Synthesize a guaranteed demo-mode response when every real provider has
+ * failed. Re-uses the same demo generator as the providers module (so the
+ * response looks native to the chosen provider) but prefixes a small banner
+ * explaining this is a fallback. We can't import demoModeCall directly (it's
+ * not exported), so we invoke callProvider with a synthetic Provider that
+ * has its apiKey stripped — callProvider will route to demoModeCall.
+ */
+async function synthesizeDemoFallback(
+  provider: Provider,
+  messages: ChatMessage[],
+  model: string | undefined,
+  attempts: FailoverAttempt[],
+): Promise<ProviderChatResult> {
+  // Strip the API key so callProvider uses demo mode (always succeeds).
+  const demoProvider: Provider = {
+    ...provider,
+    apiKey: null,
+  };
+
+  const req: ProviderChatRequest = {
+    messages,
+    model: model || defaultModel(demoProvider),
+  };
+
+  const start = Date.now();
+  const result = await callProvider(demoProvider, req);
+
+  // Prepend a fallback banner so the user knows why they're seeing this.
+  const failedNames = attempts
+    .filter((a) => !a.success && !a.skipped)
+    .map((a) => a.providerName)
+    .slice(0, 3);
+  const banner = [
+    `> ⚠️ **Live fallback triggered** — ${failedNames.length} provider(s) failed (${failedNames.join(", ")}).`,
+    `> Showing a simulated response so you still get an answer. Try again in a moment, or check the **Providers** tab.`,
+    ``,
+  ].join("\n");
+
+  return {
+    ...result,
+    content: banner + result.content,
+    latencyMs: Date.now() - start,
+  };
 }
 
 function defaultModel(provider: Provider): string {

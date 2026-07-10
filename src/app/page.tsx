@@ -164,8 +164,10 @@ interface ChatResponse {
     reason?: string;
     errorMessage?: string;
     latencyMs?: number;
+    skipped?: boolean;
   }>;
   failedOver: boolean;
+  fallback?: boolean;
   sessionId: string;
   userMessageId: string;
 }
@@ -351,10 +353,9 @@ export default function Home() {
     const data = await res.json();
     const list: Provider[] = data.providers ?? [];
     setProviders(list);
-    if (!primaryProviderId && list.length > 0) {
-      setPrimaryProviderId(list[0].id);
-    }
-  }, [primaryProviderId]);
+    // Default to "Auto" (null) so the server picks the healthiest provider.
+    // The user can still pin a specific provider by clicking it.
+  }, []);
 
   const loadFailovers = useCallback(async () => {
     const res = await fetch("/api/failovers?limit=50");
@@ -575,7 +576,13 @@ export default function Home() {
       }
 
       // Show a toast when failover happened.
-      if (data.failedOver && data.originalProvider) {
+      if (data.fallback) {
+        toast({
+          title: "Live fallback triggered",
+          description: `All live providers failed — showing a simulated response so you still get an answer.`,
+          variant: "destructive",
+        });
+      } else if (data.failedOver && data.originalProvider) {
         toast({
           title: "Failover triggered",
           description: `${data.originalProvider.displayName} failed → ${data.provider.displayName} responded.`,
@@ -826,6 +833,25 @@ export default function Home() {
                     <span className="text-xs font-medium text-slate-600 dark:text-slate-300 mr-1">
                       Primary:
                     </span>
+                    {/* Auto (best available) — no primary pinned; server picks the healthiest provider */}
+                    <button
+                      onClick={() => {
+                        setPrimaryProviderId(null);
+                        setSelectedModel("");
+                      }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                        primaryProviderId === null
+                          ? "border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-sm"
+                          : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400"
+                      }`}
+                      title="Marq picks the best available provider automatically and falls over if one is down."
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      Auto
+                      {primaryProviderId === null && (
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      )}
+                    </button>
                     {providers.map((p) => (
                       <button
                         key={p.id}
@@ -869,16 +895,18 @@ export default function Home() {
                     <span>
                       Failover chain:{" "}
                       <span className="font-medium text-slate-700 dark:text-slate-300">
-                        {providers
-                          .slice()
-                          .sort((a, b) => {
-                            // pinned primary first, then by priority
-                            if (a.id === primaryProviderId) return -1;
-                            if (b.id === primaryProviderId) return 1;
-                            return a.priority - b.priority;
-                          })
-                          .map((p) => p.displayName)
-                          .join(" → ")}
+                        {primaryProviderId === null
+                          ? "Auto (healthiest provider first)"
+                          : providers
+                              .slice()
+                              .sort((a, b) => {
+                                // pinned primary first, then by priority
+                                if (a.id === primaryProviderId) return -1;
+                                if (b.id === primaryProviderId) return 1;
+                                return a.priority - b.priority;
+                              })
+                              .map((p) => p.displayName)
+                              .join(" → ")}
                       </span>
                     </span>
                   </div>
@@ -907,7 +935,7 @@ export default function Home() {
                 {/* Composer */}
                 <div className="border-t border-slate-200 dark:border-slate-800 p-3 bg-white/80 dark:bg-slate-950/80 backdrop-blur">
                   <div className="max-w-3xl mx-auto">
-                    {lastResponse?.failedOver && (
+                    {lastResponse?.failedOver && !lastResponse?.fallback && (
                       <div className="mb-2 flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300">
                         <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
                         <span>
@@ -915,6 +943,14 @@ export default function Home() {
                           <strong>{lastResponse.originalProvider?.displayName}</strong> to{" "}
                           <strong>{lastResponse.provider.displayName}</strong> after{" "}
                           {lastResponse.attempts.filter((a) => !a.success).length} failed attempt(s).
+                        </span>
+                      </div>
+                    )}
+                    {lastResponse?.fallback && (
+                      <div className="mb-2 flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300">
+                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span>
+                          All live providers failed — showing a fallback response. Try again in a moment or check the <strong>Providers</strong> tab.
                         </span>
                       </div>
                     )}

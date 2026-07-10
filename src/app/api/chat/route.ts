@@ -139,6 +139,7 @@ export async function POST(req: NextRequest) {
       model: outcome.result.model,
       attempts: outcome.attempts,
       failedOver: outcome.failedOver,
+      fallback: outcome.fallback ?? false,
       sessionId: session.id,
       userMessageId: userMessage.id,
     });
