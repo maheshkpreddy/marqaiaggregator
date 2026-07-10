@@ -488,9 +488,12 @@ function buildActionInput(tool: string, goal: string): Record<string, unknown> {
     case "web_search":
       return { query: trimmed.slice(0, 120) || "general inquiry", num: 5 };
     case "calculator": {
-      // Try to extract a math-looking substring; fall back to a sample expr.
-      const mathMatch = trimmed.match(/[\d().+\-*/^ ]+/);
-      return { expression: (mathMatch?.[0] ?? "2 + 2").trim() };
+      // Try to extract a math-looking substring. Require at least one digit
+      // so we don't match a bare space (which the char-class would otherwise
+      // grab). If no math-looking run is found, fall back to a sample expr.
+      const mathMatch = trimmed.match(/\d[\d().+\-*/^ ]*/);
+      const expr = (mathMatch?.[0] ?? "2 + 2").trim();
+      return { expression: expr || "2 + 2" };
     }
     case "current_time":
       return {};
