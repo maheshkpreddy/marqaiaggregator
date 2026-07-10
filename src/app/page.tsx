@@ -575,19 +575,9 @@ export default function Home() {
         setActiveSessionId(data.sessionId);
       }
 
-      // Show a toast when failover happened.
-      if (data.fallback) {
-        toast({
-          title: "Live fallback triggered",
-          description: `All live providers failed — showing a simulated response so you still get an answer.`,
-          variant: "destructive",
-        });
-      } else if (data.failedOver && data.originalProvider) {
-        toast({
-          title: "Failover triggered",
-          description: `${data.originalProvider.displayName} failed → ${data.provider.displayName} responded.`,
-        });
-      }
+      // Failover / fallback events are logged silently to the Failover Log
+      // tab — we no longer show toast popups in the chat view. Users who
+      // want to inspect routing decisions can open the "Failover Log" tab.
     } catch (err) {
       // Remove placeholder.
       setMessages((m) => m.filter((msg) => msg.id !== placeholderId && msg.id !== tempId));
@@ -935,25 +925,9 @@ export default function Home() {
                 {/* Composer */}
                 <div className="border-t border-slate-200 dark:border-slate-800 p-3 bg-white/80 dark:bg-slate-950/80 backdrop-blur">
                   <div className="max-w-3xl mx-auto">
-                    {lastResponse?.failedOver && !lastResponse?.fallback && (
-                      <div className="mb-2 flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300">
-                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span>
-                          Last request failed over from{" "}
-                          <strong>{lastResponse.originalProvider?.displayName}</strong> to{" "}
-                          <strong>{lastResponse.provider.displayName}</strong> after{" "}
-                          {lastResponse.attempts.filter((a) => !a.success).length} failed attempt(s).
-                        </span>
-                      </div>
-                    )}
-                    {lastResponse?.fallback && (
-                      <div className="mb-2 flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300">
-                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span>
-                          All live providers failed — showing a fallback response. Try again in a moment or check the <strong>Providers</strong> tab.
-                        </span>
-                      </div>
-                    )}
+                    {/* Failover / fallback events are no longer surfaced as
+                        popups in the chat view — they're logged to the
+                        "Failover Log" tab instead, keeping the chat clean. */}
                     <div className="flex items-end gap-2">
                       <Textarea
                         value={input}
@@ -1973,21 +1947,8 @@ function MessageBubble({
           )}
         </div>
 
-        {message.failedOver && originalProvider && provider && (
-          <div className="mb-1.5 flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 w-fit">
-            <AlertTriangle className="w-2.5 h-2.5" />
-            <span>
-              Failed over from{" "}
-              <span className="font-medium" style={{ color: originalProvider.color }}>
-                {originalProvider.displayName}
-              </span>{" "}
-              →{" "}
-              <span className="font-medium" style={{ color: provider.color }}>
-                {provider.displayName}
-              </span>
-            </span>
-          </div>
-        )}
+        {/* Per-message failover badge removed — events are logged to the
+            "Failover Log" tab instead of cluttering the chat. */}
 
         <div
           className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed max-w-prose ${
