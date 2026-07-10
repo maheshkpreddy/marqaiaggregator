@@ -505,3 +505,38 @@ Stage Summary:
 - Both Zai and Marq GLM (Built-in) light up automatically when ZAI_TOKEN is set as a Vercel env var — single env var, two provider rows.
 - Zai is at priority 13 (low — tried last in failover); marq_glm remains at priority -1 (highest — tried first). User can reprioritize via the Providers tab UI.
 - 15 providers total in the catalog. Build green, lint clean, ready to commit + push to GitHub (Vercel will auto-deploy and seed the new Zai row on next build).
+
+---
+Task ID: fix-demo-mode-chat
+Agent: main (super-z)
+Task: Fix chat always returning Marq GLM demo responses even when live providers are configured on Vercel
+
+Work Log:
+- Diagnosed root cause via /api/setup-status + /api/chat smoke tests:
+  * 3 providers ARE live on Vercel (OpenAI, Gemini, Claude — env vars set).
+  * But marq_glm has priority -1 (highest) and NO ZAI_TOKEN set on Vercel.
+  * callProvider() fell into demoModeCall() which ALWAYS succeeds.
+  * Failover engine saw "success" and never tried the live providers below.
+  * Result: every chat returned a Marq GLM demo response regardless of which live providers existed.
+- Fix 1 (src/lib/failover.ts): skip providers with no effective API key instead of calling demoModeCall. Added "no_api_key" to FailoverAttempt.reason union. Refined failedOver flag so it's only true when the original primary was actually ATTEMPTED and failed (not just skipped) — prevents misleading "failed over" banner in Auto mode. Updated ultimate fallback banner to count both failed AND skipped providers.
+- Fix 2 (src/lib/providers.ts classifyError): was returning "unknown" for all HTTP errors because provider adapters pass plain objects ({ message: "429 ..." }) but classifyError only checked instanceof Error — plain objects fell through to String(err) → "[object object]" → no match. Now handles objects with a string message property. Added detection for billing errors (quota, credit balance, billing, insufficient) → rate_limit.
+- Fix 3 (src/lib/providers.ts + scripts/seed.ts): Gemini model gemini-2.0-flash is deprecated (404 from Google API). Updated default to gemini-2.5-flash in defaultModelFor() and updated seed models list to [gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash-lite].
+- Committed as 8b4cd1a (failover fix) + 7d38146 (gemini model + classifyError) + b5c7671 (test scripts). All pushed to GitHub, auto-deployed to Vercel.
+- Production smoke test confirmed:
+  * Skip logic works: marq_glm (no key) → skipped with reason "no_api_key".
+  * classifyError works: OpenAI 429 → rate_limit, Claude credit low → rate_limit (was "unknown" before).
+  * Remaining issue: all 3 live providers have account-level billing issues:
+    - OpenAI: quota exceeded (429)
+    - Gemini: gemini-2.5-flash also deprecated for new/free users (404)
+    - Claude: credit balance too low (400)
+  * All 3 fail → ultimate demo fallback kicks in (by design).
+- Verified ZAI_TOKEN works locally: npx tsx scripts/test-zai-provider.ts returns real GLM-4-Plus response in 1.5s. If ZAI_TOKEN is set on Vercel, marq_glm (priority -1) will be live and called first → real responses immediately.
+- Created scripts/set-vercel-env.ts: uses Vercel REST API to set ZAI_TOKEN + ZAI_BASE_URL + ZAI_API_KEY + ZAI_CHAT_ID + ZAI_USER_ID as encrypted production env vars, then triggers redeploy. Requires VERCEL_TOKEN env var.
+- Created scripts/test-chat.sh: logs in as demo user, sends "hi", prints provider/attempts/response.
+
+Stage Summary:
+- Code fixes are LIVE on Vercel: failover engine now correctly skips demo-only providers, error classification is accurate, Gemini model updated.
+- BLOCKED on setting ZAI_TOKEN on Vercel: no Vercel credentials available in sandbox. Two paths forward:
+  1. User creates a Vercel token (vercel.com/account/tokens) and runs: VERCEL_TOKEN=xxx npx tsx scripts/set-vercel-env.ts
+  2. User manually sets ZAI_TOKEN in Vercel dashboard → Settings → Environment Variables (value from /etc/.z-ai-config or provided by assistant)
+- Once ZAI_TOKEN is set on Vercel + redeployed, chat will return real GLM-4-Plus responses via marq_glm (priority -1, tried first).
