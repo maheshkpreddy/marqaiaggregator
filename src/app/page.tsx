@@ -68,12 +68,14 @@ import {
   Key,
   LogOut,
   Building2,
+  BookOpen,
 } from "lucide-react";
 import { AuthScreen } from "@/components/auth-screen";
 import { OrganizationPanel } from "@/components/org-panel";
 import { ApiKeysPanel } from "@/components/api-keys-panel";
 import { ComparePanel } from "@/components/compare-panel";
 import { PromptsPanel } from "@/components/prompts-panel";
+import { ProviderGuidePanel } from "@/components/provider-guide-panel";
 
 // ---------- Auth types ----------
 interface AuthUser {
@@ -299,7 +301,7 @@ export default function Home() {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys">("chat");
+  const [tab, setTab] = useState<"chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide">("chat");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -681,6 +683,10 @@ export default function Home() {
                 <Settings2 className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Providers</span>
               </TabsTrigger>
+              <TabsTrigger value="guide" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <BookOpen className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Guide</span>
+              </TabsTrigger>
               <TabsTrigger value="health" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
                 <Activity className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Health</span>
@@ -955,6 +961,13 @@ export default function Home() {
               providers={providers}
               onChanged={refreshAll}
               onMovePriority={(id, dir) => movePriority(id, dir, providers, setProviders, refreshAll)}
+            />
+          </TabsContent>
+
+          {/* PROVIDER GUIDE TAB */}
+          <TabsContent value="guide" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <ProviderGuidePanel
+              onUsePrompt={(prompt) => { setInput(prompt); setTab("chat"); }}
             />
           </TabsContent>
 
