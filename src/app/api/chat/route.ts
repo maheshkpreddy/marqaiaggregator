@@ -79,7 +79,12 @@ export async function POST(req: NextRequest) {
       messages: history,
       model,
       sessionId: session.id,
-      timeoutMs: 20000,
+      // 30s per provider — gives the guaranteed-availability marq_free
+      // (Pollinations.ai) enough headroom on slow moments. The failover
+      // engine skips providers with no API key instantly, so the typical
+      // chain (5 paid providers fail fast + marq_free succeeds in 1-5s)
+      // completes in well under 10s total.
+      timeoutMs: 30000,
     });
 
     const finalProvider = providers.find((p) => p.id === outcome.finalProviderId)!;
