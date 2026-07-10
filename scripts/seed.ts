@@ -198,6 +198,18 @@ async function main() {
       color: "#8b5cf6",
       icon: "atom",
     },
+    {
+      name: "marq_glm",
+      displayName: "Marq GLM (Built-in)",
+      description: "Built-in real-LLM provider powered by GLM-4-Plus via the z-ai SDK. Works on Vercel automatically when ZAI_TOKEN env var is set — no API key management needed. This is the recommended default for real chat responses.",
+      apiEndpoint: null,
+      apiKey: null,
+      models: JSON.stringify(["glm-4-plus", "glm-4-air", "glm-4-long"]),
+      active: true,
+      priority: -1, // highest priority — tried first by the failover engine
+      color: "#3b82f6",
+      icon: "sparkles",
+    },
   ];
 
   for (const p of providers) {
