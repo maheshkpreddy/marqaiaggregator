@@ -26,6 +26,7 @@ import {
   callProvider,
   classifyError,
   hasEffectiveApiKey,
+  demoModeCall,
   ProviderError,
   type ProviderChatRequest,
   type ProviderChatResult,
@@ -294,9 +295,14 @@ export async function runWithFailover(opts: FailoverOptions): Promise<FailoverOu
  * Synthesize a guaranteed demo-mode response when every real provider has
  * failed. Re-uses the same demo generator as the providers module (so the
  * response looks native to the chosen provider) but prefixes a small banner
- * explaining this is a fallback. We can't import demoModeCall directly (it's
- * not exported), so we invoke callProvider with a synthetic Provider that
- * has its apiKey stripped — callProvider will route to demoModeCall.
+ * explaining this is a fallback.
+ *
+ * IMPORTANT: We call demoModeCall DIRECTLY here (not callProvider) because
+ * callProvider re-routes marq_glm/zai to callZaiGlm() whenever ZAI_TOKEN is
+ * set as an env var — even if the provider's apiKey is stripped. That would
+ * re-trigger the failing network call instead of producing a guaranteed
+ * demo response. demoModeCall makes no network calls and always succeeds,
+ * which is the whole point of an "ultimate fallback".
  */
 async function synthesizeDemoFallback(
   provider: Provider,
@@ -304,19 +310,13 @@ async function synthesizeDemoFallback(
   model: string | undefined,
   attempts: FailoverAttempt[],
 ): Promise<ProviderChatResult> {
-  // Strip the API key so callProvider uses demo mode (always succeeds).
-  const demoProvider: Provider = {
-    ...provider,
-    apiKey: null,
-  };
-
   const req: ProviderChatRequest = {
     messages,
-    model: model || defaultModel(demoProvider),
+    model: model || defaultModel(provider),
   };
 
   const start = Date.now();
-  const result = await callProvider(demoProvider, req);
+  const result = await demoModeCall(provider, req, start);
 
   // Prepend a fallback banner so the user knows why they're seeing this.
   // Count both failed AND skipped attempts (e.g. all providers had no API
