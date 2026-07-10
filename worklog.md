@@ -616,3 +616,33 @@ Stage Summary:
 - ✅ marq_free works with zero configuration — fresh Vercel deploys immediately have a working chat with no env vars set.
 - ✅ Failover chain is transparent: every attempt is logged with provider name, success/fail status, and reason. Users can see exactly why marq_free was the one that worked.
 - Future enhancement opportunity: when the user adds a real ZAI_TOKEN (real Z.ai API key from https://z.ai) or adds billing to OpenAI/Anthropic/Google, those providers will succeed first and marq_free won't be needed. But until then, marq_free guarantees the platform always works.
+
+---
+Task ID: remove-failover-popups-from-chat
+Agent: main (super-z)
+Task: User reported failover popups cluttering the chat view ("Last request failed over from X to Y after N failed attempt(s)"). User wants popups removed from chat and shown in the Logs tab instead.
+
+Work Log:
+- Identified 3 failover surfacings in src/app/page.tsx that popped up in the chat view:
+  1. Toast notification (lines 578-590): "Failover triggered — X failed → Y responded" OR "Live fallback triggered" — fired on every chat response that involved failover.
+  2. Amber banner above the chat composer (lines 938-948): "Last request failed over from X to Y after N failed attempt(s)" — shown whenever lastResponse.failedOver was true.
+  3. Per-message amber badge (lines 1976-1990): "Failed over from X → Y" — shown inline above any assistant message whose failedOver flag was true.
+- All three were removed. The chat view now shows ONLY: user message + assistant response + provider attribution. No popups.
+- Verified the Failover Log tab (FailoverLogPanel component, line 2612) already comprehensively displays every failover event:
+  * From provider → To provider (with color-coded icons)
+  * Reason (rate_limit, auth_error, timeout, network, unknown, etc.)
+  * Timestamp
+  * Error message (truncated, monospace)
+  * Refresh button + empty-state ("No failovers yet")
+- The /api/failovers endpoint and the database FailoverLog table are unchanged — events are still recorded on every failover. Only the chat-view popups were removed.
+- TypeScript clean. Next.js build succeeds.
+- Committed as ea927f6, pushed, Vercel auto-deployed (dpl_CftVssRhzNQELbF3CDnkhw6MRi5r, READY).
+- Verified on production:
+  * POST /api/chat with "hi" → HTTP 200, real AI response "Hey there! How's it going?" from Marq Free (Always-On). failedOver=True, fallback=False.
+  * GET /api/failovers?limit=3 → 3 events recorded for this single request: Google Gemini → Anthropic Claude (unknown), Anthropic Claude → Zai (rate_limit), Zai → Marq Free (auth_error). All visible in the Failover Log tab with full detail.
+
+Stage Summary:
+- ✅ Chat view is now clean — no popups, no banners, no per-message badges. Just the conversation.
+- ✅ Failover events are still fully recorded and visible in the "Failover Log" tab (the existing Logs tab).
+- ✅ The API response still includes failedOver/fallback/attempts fields for programmatic consumers (e.g. the agent tab, the compare view) — only the chat-view visual surfacing was removed.
+- ✅ Verified end-to-end on production: chat works, real AI responses, failover log populated.
