@@ -30,8 +30,9 @@ export async function GET() {
     const hasDbKey = !!p.apiKey;
     const hasEnvKey = !!envKey;
     const hasZaiToken = !!(process.env.ZAI_TOKEN || process.env.ZAI_API_TOKEN);
+    const usesZaiToken = p.name === "marq_glm" || p.name === "zai";
     const isLive = hasDbKey || hasEnvKey ||
-      (p.name === "marq_glm" && hasZaiToken);
+      (usesZaiToken && hasZaiToken);
 
     return {
       id: p.id,
@@ -40,7 +41,7 @@ export async function GET() {
       priority: p.priority,
       isLive,
       keySource: hasDbKey ? "database" : hasEnvKey ? "env_var" :
-        (p.name === "marq_glm" && hasZaiToken) ? "env_var" : null,
+        (usesZaiToken && hasZaiToken) ? "env_var" : null,
       envVarHint: envVarHintFor(p.name),
     };
   });
@@ -63,6 +64,6 @@ function envVarHintFor(name: string): string | null {
   if (name === "claude") return "ANTHROPIC_API_KEY";
   if (name === "grok") return "XAI_API_KEY or GROK_API_KEY";
   if (name === "huggingface") return "HF_API_KEY or HUGGINGFACE_API_KEY";
-  if (name === "marq_glm") return "ZAI_TOKEN";
+  if (name === "marq_glm" || name === "zai") return "ZAI_TOKEN";
   return `${name.toUpperCase()}_API_KEY`;
 }

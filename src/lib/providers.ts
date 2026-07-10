@@ -80,6 +80,7 @@ export function classifyError(err: unknown): FailoverReason {
  *        grok          → XAI_API_KEY or GROK_API_KEY
  *        huggingface   → HF_API_KEY or HUGGINGFACE_API_KEY
  *        marq_glm      → ZAI_TOKEN (uses the z-ai SDK with GLM-4-Plus)
+ *        zai           → ZAI_TOKEN (direct z.ai API — same backend as marq_glm)
  *        (custom)      → <NAME_UPPER>_API_KEY
  *
  * If no key is found anywhere, we fall back to demo mode, which generates a
@@ -96,8 +97,11 @@ export async function callProvider(
     // Build a provider copy with the env-var key so realModeCall can use it.
     return realModeCall({ ...provider, apiKey: effectiveKey }, req, start);
   }
-  // Special case: marq_glm uses the z-ai SDK which needs ZAI_TOKEN env var.
-  if (provider.name === "marq_glm" && (process.env.ZAI_TOKEN || process.env.ZAI_API_TOKEN)) {
+  // Special case: marq_glm and zai both use the z-ai API which needs
+  // ZAI_TOKEN env var. The "zai" provider is the user-facing name; marq_glm
+  // is the original built-in alias kept for backward compatibility.
+  if ((provider.name === "marq_glm" || provider.name === "zai") &&
+      (process.env.ZAI_TOKEN || process.env.ZAI_API_TOKEN)) {
     return callZaiGlm(provider, req, start);
   }
   return demoModeCall(provider, req, start);
@@ -122,6 +126,10 @@ export function getEnvApiKey(providerName: string): string | null {
     candidates.push("XAI_API_KEY", "GROK_API_KEY");
   } else if (providerName === "huggingface") {
     candidates.push("HF_API_KEY", "HUGGINGFACE_API_KEY", "HF_TOKEN");
+  } else if (providerName === "zai" || providerName === "marq_glm") {
+    // Zai (z.ai) — the API uses a JWT token rather than a typical API key.
+    // We still expose ZAI_API_KEY as a fallback so the generic pattern works.
+    candidates.push("ZAI_TOKEN", "ZAI_API_TOKEN", "ZAI_API_KEY");
   }
   for (const key of candidates) {
     const v = process.env[key];
@@ -137,7 +145,8 @@ export function getEnvApiKey(providerName: string): string | null {
 export function hasEffectiveApiKey(provider: Provider): boolean {
   if (provider.apiKey) return true;
   if (getEnvApiKey(provider.name)) return true;
-  if (provider.name === "marq_glm" && (process.env.ZAI_TOKEN || process.env.ZAI_API_TOKEN)) return true;
+  if ((provider.name === "marq_glm" || provider.name === "zai") &&
+      (process.env.ZAI_TOKEN || process.env.ZAI_API_TOKEN)) return true;
   return false;
 }
 
@@ -177,7 +186,8 @@ async function demoModeCall(
     provider.name === "crewai" ? 1100 :
     provider.name === "langchain" ? 850 :
     provider.name === "qvac" ? 700 :
-    provider.name === "marq_glm" ? 500 : 450;
+    provider.name === "marq_glm" ? 500 :
+    provider.name === "zai" ? 500 : 450;
   const jitter = Math.floor(Math.random() * 200);
   await new Promise((r) => setTimeout(r, baseLatency + jitter));
 
@@ -421,6 +431,25 @@ function buildDemoResponse(provider: Provider, req: ProviderChatRequest): string
         `Alternatively, add an OpenAI / Anthropic / Google API key via the **Providers** tab to use those providers directly.`,
       ].join("\n");
 
+    case "zai":
+      return [
+        `_${persona}_`,
+        ``,
+        `**Demo response from Zai**`,
+        ``,
+        `You asked: "${snippet}".`,
+        ``,
+        `This is a simulated response because no \`ZAI_TOKEN\` environment variable is set. Zai (z.ai) provides direct access to the GLM-4 family — GLM-4-Plus for highest quality, GLM-4-Air for balanced cost/latency, GLM-4-Long for very long contexts, and GLM-4-Flash for the fastest responses.`,
+        ``,
+        `**To enable real Zai responses on Vercel:**`,
+        `1. Go to your Vercel project → Settings → Environment Variables.`,
+        `2. Add \`ZAI_TOKEN\` with a valid z.ai JWT token.`,
+        `3. (Optional) Add \`ZAI_BASE_URL\` if you have a custom endpoint.`,
+        `4. Redeploy. The Zai provider will automatically use real GLM-4-Plus completions.`,
+        ``,
+        `Zai shares its backend with the Marq GLM (Built-in) provider — set the env var once and both light up.`,
+      ].join("\n");
+
     default:
       return [
         `**Demo response from ${provider.displayName}**`,
@@ -623,7 +652,9 @@ async function realModeCall(
     case "claude":
       return callClaude(provider, req, model, start);
     case "marq_glm":
+    case "zai":
       // Should have been caught by callProvider, but handle here too.
+      // Both providers route to the same z.ai GLM-4 backend.
       return callZaiGlm(provider, req, start);
     default:
       // Treat unknown providers as OpenAI-compatible.
@@ -873,6 +904,8 @@ function personaFor(name: string): string {
       return "You are Marq-Qvac, a quantum-inspired reasoning assistant. You explore multiple solution paths in parallel and recommend the most defensible one.";
     case "marq_glm":
       return "You are Marq GLM, powered by GLM-4-Plus. You give clear, accurate, and helpful answers to any question. You are the default real-LLM provider for the Marq platform when ZAI_TOKEN is configured.";
+    case "zai":
+      return "You are Zai, powered by GLM-4-Plus via the official z.ai API. You give clear, accurate, and helpful answers across general chat, reasoning, code, and long-context tasks. You support multiple GLM-4 variants (Plus, Air, Long, Flash) so the user can pick the right balance of quality, cost, latency, and context length.";
     default:
       return "You are Marq AI, a helpful unified assistant.";
   }
@@ -894,6 +927,7 @@ export function defaultModelFor(providerName: string): string {
     case "langchain": return "marq-langchain-default";
     case "qvac": return "marq-qvac-default";
     case "marq_glm": return "glm-4-plus";
+    case "zai": return "glm-4-plus";
     default: return "marq-default";
   }
 }

@@ -477,3 +477,31 @@ Stage Summary:
     - GEMINI_API_KEY or GOOGLE_AI_API_KEY
     - ZAI_TOKEN (for the built-in Marq GLM provider)
   Then redeploy. The platform will automatically use the first live provider and fall over if one fails.
+
+---
+Task ID: add-zai-provider
+Agent: main (super-z)
+Task: Add Zai as a first-class provider in the providers section (user request: "Also can you add the Zai also as one of the provider in the providers section")
+
+Work Log:
+- Reviewed existing marq_glm provider: it already calls z.ai GLM-4-Plus via callZaiGlm() using ZAI_TOKEN env var, but is branded "Marq GLM (Built-in)" and doesn't appear in the provider-benefits catalog. The user wants a distinct, clearly-named "Zai" entry alongside OpenAI/Gemini/Claude/etc.
+- scripts/seed.ts: added new "zai" provider row — displayName "Zai", priority 13 (right after qvac at 12), color #0ea5e9, models ["glm-4-plus","glm-4-air","glm-4-long","glm-4-flash"], apiKey null, apiEndpoint null. Idempotent upsert so Vercel deploys pick it up on next build.
+- src/lib/providers.ts (8 changes):
+  * Updated env-var mapping comment block to mention zai → ZAI_TOKEN.
+  * callProvider(): now routes both "marq_glm" AND "zai" through callZaiGlm() when ZAI_TOKEN is set.
+  * getEnvApiKey(): added "zai" / "marq_glm" branch returning ZAI_TOKEN, ZAI_API_TOKEN, ZAI_API_KEY candidates.
+  * hasEffectiveApiKey(): now treats both "marq_glm" and "zai" as live when ZAI_TOKEN is set.
+  * demoModeCall latency map: added "zai" → 500ms (same as marq_glm).
+  * buildDemoResponse: added "zai" case with Zai-branded demo response explaining GLM-4 variants and how to set ZAI_TOKEN on Vercel.
+  * realModeCall: added "zai" case routing to callZaiGlm (joined with marq_glm case).
+  * personaFor: added "zai" persona covering GLM-4-Plus/Air/Long/Flash.
+  * defaultModelFor: added "zai" → "glm-4-plus".
+- src/app/api/setup-status/route.ts: extracted usesZaiToken flag (covers both "marq_glm" and "zai") so isLive, keySource, and envVarHint all work for the new provider.
+- src/lib/provider-benefits.ts: added full Zai entry to the catalog — category "frontier", 5 bestFor bullets, 5 capabilities, 4 whenToUse, 3 limitations, 3 sample prompts (long-context summarization, bilingual translation, code refactor), setup notes pointing at z.ai developer console + Vercel env var, pricing tier, docs link. This makes Zai show up in the Guide tab alongside the other 13 providers.
+- Verified: npx tsc --noEmit → 0 errors. VERCEL=1 npx next build → all 34 routes compile. prisma db push + scripts/seed.ts → "✓ Created: Zai". GET /api/setup-status → 15 providers total (was 14), Zai at priority 13 with envVarHint "ZAI_TOKEN".
+
+Stage Summary:
+- Zai is now a first-class provider visible in the Providers tab, the chat provider picker, the comparison view, the failover chain, and the Guide tab.
+- Both Zai and Marq GLM (Built-in) light up automatically when ZAI_TOKEN is set as a Vercel env var — single env var, two provider rows.
+- Zai is at priority 13 (low — tried last in failover); marq_glm remains at priority -1 (highest — tried first). User can reprioritize via the Providers tab UI.
+- 15 providers total in the catalog. Build green, lint clean, ready to commit + push to GitHub (Vercel will auto-deploy and seed the new Zai row on next build).

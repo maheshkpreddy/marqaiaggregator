@@ -210,6 +210,21 @@ async function main() {
       color: "#3b82f6",
       icon: "sparkles",
     },
+    {
+      name: "zai",
+      displayName: "Zai",
+      description:
+        "Zai (z.ai) — direct access to GLM-4-Plus, GLM-4-Air, and GLM-4-Long models via the official z.ai API. " +
+        "Same backend as Marq GLM, exposed as a first-class provider so it shows up alongside OpenAI, Gemini, and Claude in the provider picker, comparison view, and guide. " +
+        "Activate by setting ZAI_TOKEN (and optionally ZAI_BASE_URL) as env vars — no key management needed in the UI.",
+      apiEndpoint: null,
+      apiKey: null,
+      models: JSON.stringify(["glm-4-plus", "glm-4-air", "glm-4-long", "glm-4-flash"]),
+      active: true,
+      priority: 13,
+      color: "#0ea5e9",
+      icon: "sparkles",
+    },
   ];
 
   for (const p of providers) {

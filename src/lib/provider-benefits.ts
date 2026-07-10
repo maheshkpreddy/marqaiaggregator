@@ -639,6 +639,52 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     pricingTier: "Varies by deployment. Self-hosted is free + hardware costs.",
     docsUrl: "https://docs.qvac.ai",
   },
+
+  {
+    name: "zai",
+    displayName: "Zai",
+    tagline: "Direct access to the GLM-4 family — Plus, Air, Long, and Flash — via the official z.ai API.",
+    icon: "Sparkles",
+    color: "#0ea5e9",
+    category: "frontier",
+    bestFor: [
+      "High-quality general chat and reasoning via GLM-4-Plus",
+      "Long-context tasks (up to 128K tokens) via GLM-4-Long",
+      "Cost-sensitive high-volume runs via GLM-4-Air",
+      "Low-latency interactive chat via GLM-4-Flash",
+      "Bilingual (English + Chinese) workloads — GLM-4 is natively strong in both",
+    ],
+    capabilities: [
+      "Chat with GLM-4-Plus, GLM-4-Air, GLM-4-Long, and GLM-4-Flash from a single provider row",
+      "Use as the primary or failover provider in the chat and agent engines",
+      "Run side-by-side in Compare mode against OpenAI, Gemini, and Claude",
+      "Pin as the LLM backbone for any of the 8 agent templates",
+      "Activate instantly by setting ZAI_TOKEN as a Vercel env var — no per-row key management",
+    ],
+    whenToUse: [
+      "You want a frontier-class model without a US-centric billing footprint",
+      "Your workload is bilingual English/Chinese and you want native fluency in both",
+      "You need a long-context model (GLM-4-Long) without paying Gemini/Claude long-context premiums",
+      "You want a single env var (ZAI_TOKEN) to light up both Zai and Marq GLM at once",
+    ],
+    limitations: [
+      "Requires a z.ai JWT token — generated from the z.ai developer console, not a typical API key",
+      "Custom auth headers (X-Token + X-Z-AI-From) — handled by the adapter, but worth knowing for debugging",
+      "GLM-4-Flash has lower reasoning depth than Plus — pick the variant that matches the task",
+    ],
+    samplePrompts: [
+      "Summarize this 30-page product spec and extract the top 5 risks. (Use GLM-4-Long for the long context.)",
+      "Translate this English changelog into natural, fluent Chinese and back-translate to verify accuracy.",
+      "Refactor this TypeScript function and explain each change. Use the most capable GLM-4 variant.",
+    ],
+    setupNotes:
+      "Sign in at z.ai, generate a JWT token from the developer console, then set ZAI_TOKEN as a Vercel env var " +
+      "(Project → Settings → Environment Variables → Redeploy). Optionally set ZAI_BASE_URL to point at a custom " +
+      "z.ai endpoint. No per-row API key is needed in the Providers tab — the adapter reads the env var directly. " +
+      "Zai shares its backend with the Marq GLM (Built-in) provider, so configuring ZAI_TOKEN lights up both.",
+    pricingTier: "Pay-as-you-go per token. GLM-4-Flash is the cheapest variant; GLM-4-Plus is the premium tier.",
+    docsUrl: "https://docs.z.ai",
+  },
 ];
 
 /** Quick lookup by provider name. */
