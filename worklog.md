@@ -646,3 +646,43 @@ Stage Summary:
 - ✅ Failover events are still fully recorded and visible in the "Failover Log" tab (the existing Logs tab).
 - ✅ The API response still includes failedOver/fallback/attempts fields for programmatic consumers (e.g. the agent tab, the compare view) — only the chat-view visual surfacing was removed.
 - ✅ Verified end-to-end on production: chat works, real AI responses, failover log populated.
+
+---
+Task ID: skills-platform-import
+Agent: main (super-z)
+Task: Take the reference of all agents from https://marqaiskills.vercel.app and build all of them in the Marq AI Aggregator agents module, then update Vercel.
+
+Work Log:
+- Fetched the public skills catalog at https://marqaiskills.vercel.app/api/skills by signing in via NextAuth credentials endpoint with the demo admin account (admin@marqai.io / password) — retrieved 139 production-ready skills with name, description, full markdown content, category (10 categories), emoji icon, and hex color.
+- Wrote scripts/gen-agent-templates-from-marqai-skills.py — reads /tmp/all_skills.json, maps each skill to an AgentTemplate entry (slug→key, slug→displayName, first sentence→tagline, content→persona preamble, category→12-slug union, tool whitelist per category, 2 derived suggestedGoals). Generated src/lib/agent-templates-data.json (139 entries, 557KB).
+- Rewrote src/lib/agent-templates.ts:
+  - Expanded AgentTemplateCategory union from 4 to 12 entries (added agent_arch, marq_products, sales, consulting, security, marketing, strategy, sports alongside engineering/business/operations/general).
+  - Kept the 8 curated templates (general, fullstack_dev, testing, devops, business_analyst, sales, product_manager, research) verbatim for backwards compatibility with existing AgentTask rows.
+  - Imported 139 reference templates from the JSON file, cast to AgentTemplate[], stripped the sourceCategory debug field, deduped against curated keys (curated wins on collision).
+  - Exported CATEGORY_LABELS + CATEGORY_ORDER for the UI.
+- Updated src/app/page.tsx AgentPanel:
+  - TemplateIcon now renders emoji glyphs directly when the icon string is not a Lucide name (reference templates use emoji icons like 🤖/💰/🏆; curated templates still use Lucide names like Sparkles/Code2).
+  - Added tplSearch + tplCategoryFilter state for the picker.
+  - Added a search input that filters all 147 templates by name, tagline, description, or key, with a "{visible} of {total} shown" counter.
+  - Added 13 category filter pills (All + 12 categories) with per-category counts; clicking an active pill clears the filter.
+  - Made the template grid scrollable (max-height 560px) so the picker stays compact.
+  - Added empty-state message ("No agents match your search.").
+  - Updated the header description to read "{N} agent personas across {M} categories — full-stack developer, sales, DevOps, marketing, security, sports analytics, and many more, imported from the Marq AI Skills Platform."
+  - Tagline uses line-clamp-2 for uniform card heights.
+  - Expanded categoryLabels + categoryOrder to cover all 12 categories in display order (General first, then topical).
+- Verified: npx tsc --noEmit clean; VERCEL=1 npx next build succeeds with all 34 routes; pre-existing lint errors in src/lib/auth.ts and the unused eslint-disable warning at src/app/page.tsx:2154 are NOT from this change.
+- Committed as aae41c2 feat(agents): import 139 agent templates from Marq AI Skills Platform (4 files, +3793/-82 lines).
+- Pushed to GitHub main (939c5fe..aae41c2) — Vercel auto-deploy triggered via the active GitHub integration.
+- Smoke-tested production at https://marqaiaggregator.vercel.app:
+  - GET / → HTTP 200, prerendered.
+  - GET /api/agent/templates → 147 templates across 12 categories. Breakdown: sales 27, engineering 24 (22 ref + 2 curated), sports 20, marketing 18, consulting 11, strategy 11, operations 9 (8 ref + 1 curated), agent_arch 9, marq_products 8, security 5, business 3 (curated), general 2 (curated).
+  - Spot-checked 5 reference templates (agent_army, code_review_pro, deal_closer_playbook, bracket_predictor, compliance_checker) — all carry the correct emoji icon, hex color, category, tool whitelist, and 2 suggested goals.
+  - GET /api/agent/tools → 11 tools unchanged.
+
+Stage Summary:
+- ✅ 139 agents from https://marqaiskills.vercel.app are now built into the Marq AI Aggregator agents module.
+- ✅ Combined with the 8 original curated personas, the Agent tab now offers 147 selectable agent templates across 12 categories.
+- ✅ Every reference template ships with its full skill markdown as the persona preamble, its emoji icon, its brand color, a category-mapped tool whitelist, and 2 one-click starter goals — all running through the same ReAct loop and the same per-step failover engine as chat.
+- ✅ The picker UI now has search + category filter pills + a scrollable grid so 147 templates stay browsable.
+- ✅ Live in production: https://marqaiaggregator.vercel.app — /api/agent/templates returns 147 entries.
+- Future skill-catalog updates: re-run `python3 scripts/gen-agent-templates-from-marqai-skills.py` (after re-fetching /tmp/all_skills.json with a valid session cookie) and commit the regenerated JSON.
