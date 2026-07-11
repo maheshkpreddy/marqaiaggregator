@@ -765,3 +765,46 @@ Stage Summary:
 - ✅ Conversations persist across page reloads — sidebar lists all prior agent chats with persona icon, title, and last-message preview.
 - ✅ Same failover engine as chat: if the primary provider fails mid-turn, the next takes over.
 - ✅ Live in production: https://marqaiaggregator.vercel.app — /api/agent/chat, /api/agent/sessions, /api/agent/sessions/[id] all working.
+
+---
+Task ID: open-source-first-auto-mode
+Agent: main (super-z)
+Task: Reorder the auto-mode failover chain so open-source / free providers are tried first, with chargeable commercial APIs as a fallback — to deliver fast, accurate responses with no lags or fallbacks. Deploy to Vercel.
+
+Work Log:
+- Added provider tier classification in src/lib/providers.ts:
+  - New exported type ProviderTier = "open_source" | "paid".
+  - New exported function providerTier(provider) → "open_source" | "paid" based on the canonical provider name.
+  - New exported function reorderProvidersOpenSourceFirst(providers) → stable partition that puts open-source providers first, paid providers last, preserving relative order within each tier.
+  - Hardcoded OPEN_SOURCE_PROVIDER_NAMES set: marq_free, huggingface, ollama, gradio, mlflow, crewai, langchain, replit, modal. Custom / unknown providers default to "paid" so we never accidentally prefer an unknown commercial provider over marq_free.
+- Applied the reorder in all 4 failover entry points (after loading providers from DB, before passing to runWithFailover):
+  - src/lib/agent.ts → runAgentTask (agent task runner)
+  - src/lib/agent-chat.ts → runAgentChatTurn (ZAI/Claude-style chat engine)
+  - src/app/api/chat/route.ts → POST (regular chat)
+  - src/app/api/v1/chat/completions/route.ts → POST (public OpenAI-compatible API)
+  - In every entry point, a pinned primary (when the user explicitly sets one) still wins — we move it to the front AFTER the tier reorder so the user's explicit choice is respected, but the rest of the failover chain follows the open-source-first policy.
+- Updated scripts/seed.ts DB priorities so the row order matches the runtime reorder (the reorder is now a no-op in steady state, but still protects against custom user-edited priorities):
+  - Tier 1 (open source, priority 0–8): marq_free (0), huggingface (1), ollama (2), gradio (3), mlflow (4), crewai (5), langchain (6), replit (7), modal (8).
+  - Tier 2 (chargeable, priority 9–15): marq_glm (9), zai (10), openai (11), gemini (12), claude (13), grok (14), qvac (15).
+  - marq_glm dropped from priority -1 (was tried first) to priority 9 — it's a chargeable z.ai commercial API.
+  - marq_free promoted from priority 100 (was tried last) to priority 0 — tried first.
+  - Updated marq_free description to reflect the new "tried FIRST" policy.
+- Stopped pinning OpenAI as the primary provider on seeded agent tasks (primaryProviderId=null) so the open-source-first auto-mode policy applies by default.
+- Ran `npx tsc --noEmit` → clean (0 errors). Ran `VERCEL=1 npx next build` → succeeded with all 37 routes.
+- Ran the seed script locally → verified the DB provider priority order now matches: marq_free(0) → huggingface(1) → ollama(2) → … → openai(11) → gemini(12) → claude(13) → grok(14) → qvac(15).
+- Smoke-tested Pollinations endpoint directly: POST https://text.pollinations.ai/openai with {"model":"openai","messages":[{"role":"user","content":"Reply with exactly: PONG"}],"max_tokens":10} → returned "PONG" using the open-source gpt-oss-20b model. Confirms the always-on free provider is live.
+- Committed as 948526f feat(providers): open-source-first auto mode — free providers (marq_free, HuggingFace, Ollama, frameworks) tried before chargeable APIs (6 files, +205/-102 lines).
+- Pushed to GitHub main (bf196b5..948526f). Vercel auto-deploy triggered.
+- Production smoke tests (all passed):
+  - GET / → HTTP 200 (461ms).
+  - GET /api/agent/templates → 147 templates (unchanged).
+  - GET /api/providers → priority order matches: marq_free(0), huggingface(1), ollama(2), gradio(3), mlflow(4), crewai(5), langchain(6), replit(7).
+  - POST /api/chat {message:"Reply with exactly: OPEN_SOURCE_FIRST_OK"} → finalProvider=marq_free, model=gpt-oss-20b, failedOver=false, fallback=false, latency=4120ms, attempts=1, content="OPEN_SOURCE_FIRST_OK". One attempt, no failover, no fallback — exactly the "no lags, no fallbacks" behavior the user asked for.
+  - POST /api/agent/chat {message:"What is 7 + 5? Reply with just the number.", agentType:"general"} → ok=true, finalProvider=Marq Free (Always-On), finalModel=gpt-oss-20b, failedOverCount=0, totalLatencyMs=7066, steps=1, content="12". Same open-source-first behavior in the agent chat engine.
+
+Stage Summary:
+- ✅ Auto mode now tries open-source / free providers FIRST (marq_free → HuggingFace → Ollama → Gradio → MLflow → CrewAI → LangChain → Replit → Modal), with chargeable commercial APIs (marq_glm → zai → OpenAI → Gemini → Claude → Grok → Qvac) as fallback.
+- ✅ Production chat resolves on the FIRST attempt via marq_free (Pollinations / gpt-oss-20b) — no failover chain, no demo fallback, no lag.
+- ✅ Agent chat (ZAI/Claude-style UI) uses the same open-source-first chain — single-step agent tasks complete in ~7s.
+- ✅ Live in production: https://marqaiaggregator.vercel.app — verified with both /api/chat and /api/agent/chat smoke tests.
+- ✅ A pinned primary provider (when the user explicitly sets one) still wins — the tier reorder only affects the auto-mode chain after the pinned primary.
