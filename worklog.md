@@ -686,3 +686,31 @@ Stage Summary:
 - ✅ The picker UI now has search + category filter pills + a scrollable grid so 147 templates stay browsable.
 - ✅ Live in production: https://marqaiaggregator.vercel.app — /api/agent/templates returns 147 entries.
 - Future skill-catalog updates: re-run `python3 scripts/gen-agent-templates-from-marqai-skills.py` (after re-fetching /tmp/all_skills.json with a valid session cookie) and commit the regenerated JSON.
+
+---
+Task ID: agent-parse-error-fix
+Agent: main (super-z)
+Task: Fix "Response did not contain FINAL_ANSWER or ACTION/ACTION_INPUT" error when running imported skills-platform agents on Vercel.
+
+Work Log:
+- Root cause: the 139 imported skills-platform templates ship long persona preambles (avg ~3KB, max 15KB for agent_army). The original buildSystemPrompt put the strict ReAct format rules at the BOTTOM of the system prompt, AFTER the persona — so the LLM followed the skill markdown and responded in prose/markdown, which the parser couldn't match. Every imported-agent task failed.
+- Fix 1 (src/lib/agent.ts buildSystemPrompt): reordered sections. Format rules now at the TOP (most-attended position), one-shot example next, then persona (truncated to 4500 chars with a truncation marker if longer), then tools, then goal, then a final REMINDER block. Persona is now framed as "AGENT PERSONA" context rather than the primary system prompt.
+- Fix 2 (src/lib/agent.ts parseStepResponse): made lenient. Now strips a single outer pair of markdown code fences before parsing. FINAL_ANSWER no longer requires end-of-string (accepts trailing code fence or end-of-string). For ACTION_INPUT, replaced the single-line regex with a brace-balancing scanner that handles pretty-printed JSON, nested objects, escaped quotes inside strings, and trailing commentary after the JSON.
+- Fix 3 (src/lib/agent.ts buildHistory): strengthened the parse-error nudge message — now spells out the exact two formats again and explicitly forbids prose/markdown/code fences.
+- Fix 4 (src/app/api/agent/tasks/route.ts): bumped Vercel function maxDuration from default 10s to 300s (route segment config), and per-step LLM timeout from 20s to 45s, so long-persona prompts have time to complete.
+- Added scripts/test-react-parser.ts — 10-case sanity test covering code fences, trailing commentary, pretty-printed JSON, nested objects, escaped quotes, lowercase markers, and pure-prose (should-fail) inputs. All 10 pass.
+- Verified: npx tsc --noEmit clean; VERCEL=1 npx next build succeeds with all 34 routes.
+- Committed as 3a2e4a2 fix(agent): resolve 'Response did not contain FINAL_ANSWER or ACTION/ACTION_INPUT' errors.
+- Pushed to GitHub main (16bf00c..3a2e4a2). Vercel auto-deploy triggered.
+- Production smoke tests (all 4 passed):
+  - agent_army (15KB persona, longest): goal "What is 25 * 17?" → status=completed, finalAnswer="425", 1 step, 5s latency, failedOverCount=1 (failover engine worked).
+  - deal_closer_playbook (~4.5KB): goal "What is 7 + 8?" → status=completed, finalAnswer="15", failedOverCount=1.
+  - bracket_predictor (~1.4KB): goal "Capital of France?" → status=completed, finalAnswer="Paris".
+  - general (curated, ~0.4KB): goal "What is 2 + 2?" → status=completed, finalAnswer="4".
+
+Stage Summary:
+- ✅ Imported skills-platform agents now run successfully on Vercel — no more parse errors.
+- ✅ The fix is robust to code-fenced responses, pretty-printed JSON, nested objects, trailing commentary, lowercase markers, and escaped quotes — all common LLM response variations that previously broke the parser.
+- ✅ Curated templates (general, fullstack_dev, etc.) continue to work unchanged.
+- ✅ Vercel function timeout bumped to 300s so multi-step tasks have room to complete.
+- ✅ 10/10 parser unit tests pass.
