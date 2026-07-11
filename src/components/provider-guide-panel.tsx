@@ -91,7 +91,7 @@ export function ProviderGuidePanel({ onUsePrompt }: ProviderGuidePanelProps) {
   }, []);
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="space-y-2">
         <div className="flex items-center gap-2">

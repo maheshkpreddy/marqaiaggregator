@@ -164,6 +164,18 @@ export function getEnvApiKey(providerName: string): string | null {
     // Zai (z.ai) — the API uses a JWT token rather than a typical API key.
     // We still expose ZAI_API_KEY as a fallback so the generic pattern works.
     candidates.push("ZAI_TOKEN", "ZAI_API_TOKEN", "ZAI_API_KEY");
+  } else if (providerName === "mistral") {
+    candidates.push("MISTRAL_API_KEY");
+  } else if (providerName === "deepseek") {
+    candidates.push("DEEPSEEK_API_KEY");
+  } else if (providerName === "qwen") {
+    // Alibaba DashScope — accepts DASHSCOPE_API_KEY as the canonical name.
+    candidates.push("DASHSCOPE_API_KEY", "QWEN_API_KEY", "ALIBABA_API_KEY");
+  } else if (providerName === "vllm") {
+    // vLLM is self-hosted — optional shared token via --api-key flag.
+    candidates.push("VLLM_API_KEY");
+  } else if (providerName === "anaconda") {
+    candidates.push("ANACONDA_TOKEN", "CONDA_TOKEN");
   }
   for (const key of candidates) {
     const v = process.env[key];
@@ -207,10 +219,23 @@ const OPEN_SOURCE_PROVIDER_NAMES = new Set<string>([
   "marq_free",     // Pollinations.ai — free, no-auth, always-on real LLM
   "huggingface",   // Open-source model zoo (Llama, Mistral, Phi) — free tier
   "ollama",        // Local open-source models (Llama, Mistral, Phi)
-  "gradio",        // Hugging Face Gradio Spaces — open-source demos
-  "mlflow",        // Open-source MLOps framework
+  "vllm",          // Open-source high-throughput LLM serving (Apache 2.0)
+  "llama",         // Meta Llama open-weight model family
+  "transformers",  // Hugging Face Transformers library (Apache 2.0)
+  "pytorch",       // PyTorch tensor library (BSD)
+  "tensorflow",    // TensorFlow (Apache 2.0)
+  "keras",         // Keras 3 multi-backend (Apache 2.0)
+  "opencv",        // OpenCV computer vision (BSD)
+  "scikit_learn",  // scikit-learn classical ML (BSD)
+  "instructor",    // Instructor structured extraction (MIT)
+  "autogen",       // Microsoft AutoGen multi-agent (MIT)
   "crewai",        // Open-source multi-agent framework
   "langchain",     // Open-source LLM framework
+  "mlflow",        // Open-source MLOps framework
+  "openclaw",      // Open-source agentic framework
+  "outerbounds",   // Metaflow-based platform (open-source core)
+  "anaconda",      // Conda package platform (open-source core)
+  "gradio",        // Hugging Face Gradio Spaces — open-source demos
   "replit",        // replit-code is open weights
   "modal",         // Open-source serverless platform (pay-for-compute, not per-token)
 ]);

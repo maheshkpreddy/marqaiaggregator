@@ -69,6 +69,8 @@ import {
   LogOut,
   Building2,
   BookOpen,
+  Network,
+  BarChart3,
 } from "lucide-react";
 import { AuthScreen } from "@/components/auth-screen";
 import { OrganizationPanel } from "@/components/org-panel";
@@ -77,6 +79,8 @@ import { ComparePanel } from "@/components/compare-panel";
 import { PromptsPanel } from "@/components/prompts-panel";
 import { ProviderGuidePanel } from "@/components/provider-guide-panel";
 import { AgentPanel } from "@/components/agent-panel";
+import { AIDirectoryPanel } from "@/components/ai-directory-panel";
+import { AIAnalyticsDashboard } from "@/components/ai-analytics-dashboard";
 
 // ---------- Auth types ----------
 interface AuthUser {
@@ -319,7 +323,7 @@ export default function Home() {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide">("chat");
+  const [tab, setTab] = useState<"chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "analytics">("chat");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -638,24 +642,26 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
-      {/* Header */}
+      {/* Header — two rows: brand + auth on top, tab bar on bottom (decongested) */}
       <header className="sticky top-0 z-40 border-b border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl">
-        <div className="px-4 md:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+        {/* Row 1: brand + health summary + org/user menu */}
+        <div className="px-4 md:px-8 h-14 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 shrink-0">
               <Layers className="w-5 h-5 text-white" strokeWidth={2.5} />
             </div>
-            <div>
-              <div className="font-bold text-base md:text-lg leading-tight tracking-tight">
+            <div className="min-w-0">
+              <div className="font-bold text-base md:text-lg leading-tight tracking-tight truncate">
                 Marq <span className="text-emerald-600 dark:text-emerald-400">AI</span>
               </div>
-              <div className="text-[10px] md:text-xs text-slate-500 dark:text-slate-400 -mt-0.5">
+              <div className="text-[10px] md:text-xs text-slate-500 dark:text-slate-400 -mt-0.5 hidden sm:block">
                 Unified AI Aggregator
               </div>
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-4 text-xs">
+          {/* Center: live health summary (hidden on small screens) */}
+          <div className="hidden lg:flex items-center gap-4 text-xs">
             <div className="flex items-center gap-1.5">
               <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
               <span className="text-slate-600 dark:text-slate-300">{healthyCount} healthy</span>
@@ -674,53 +680,8 @@ export default function Home() {
             )}
           </div>
 
-          <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-            <TabsList className="bg-slate-100 dark:bg-slate-900">
-              <TabsTrigger value="chat" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Chat</span>
-              </TabsTrigger>
-              <TabsTrigger value="compare" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <GitCompare className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Compare</span>
-              </TabsTrigger>
-              <TabsTrigger value="prompts" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <BookMarked className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Prompts</span>
-              </TabsTrigger>
-              <TabsTrigger value="agent" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Brain className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Agent</span>
-              </TabsTrigger>
-              <TabsTrigger value="providers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Settings2 className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Providers</span>
-              </TabsTrigger>
-              <TabsTrigger value="guide" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <BookOpen className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Guide</span>
-              </TabsTrigger>
-              <TabsTrigger value="health" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Activity className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Health</span>
-              </TabsTrigger>
-              <TabsTrigger value="failovers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Shield className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Failover Log</span>
-              </TabsTrigger>
-              <TabsTrigger value="org" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Users className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Team</span>
-              </TabsTrigger>
-              <TabsTrigger value="apikeys" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Key className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">API Keys</span>
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          {/* Org switcher + user menu */}
-          <div className="flex items-center gap-2">
+          {/* Right: org switcher + user menu */}
+          <div className="flex items-center gap-2 shrink-0">
             <div className="relative">
               <button
                 onClick={() => setOrgMenuOpen((o) => !o)}
@@ -767,6 +728,69 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        {/* Row 2: tab bar — scrollable horizontally on small screens, grouped into logical clusters */}
+        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+          <div className="px-4 md:px-8 pb-2 overflow-x-auto">
+            <TabsList className="bg-slate-100 dark:bg-slate-900 h-9">
+              {/* Cluster 1: Build (chat, compare, prompts, agent) */}
+              <TabsTrigger value="chat" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Chat</span>
+              </TabsTrigger>
+              <TabsTrigger value="compare" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <GitCompare className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Compare</span>
+              </TabsTrigger>
+              <TabsTrigger value="agent" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Brain className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Agent</span>
+              </TabsTrigger>
+              <TabsTrigger value="prompts" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <BookMarked className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Prompts</span>
+              </TabsTrigger>
+
+              {/* Cluster 2: Discover (directory, guide) */}
+              <TabsTrigger value="directory" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 border-l border-slate-200/70 dark:border-slate-800/70 ml-1">
+                <Network className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">AI Directory</span>
+              </TabsTrigger>
+              <TabsTrigger value="guide" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <BookOpen className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Guide</span>
+              </TabsTrigger>
+
+              {/* Cluster 3: Admin (analytics, health, failovers, providers) */}
+              <TabsTrigger value="analytics" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 border-l border-slate-200/70 dark:border-slate-800/70 ml-1">
+                <BarChart3 className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Analytics</span>
+              </TabsTrigger>
+              <TabsTrigger value="health" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Activity className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Health</span>
+              </TabsTrigger>
+              <TabsTrigger value="failovers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Shield className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Failovers</span>
+              </TabsTrigger>
+              <TabsTrigger value="providers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Settings2 className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Providers</span>
+              </TabsTrigger>
+
+              {/* Cluster 4: Org (team, api keys) */}
+              <TabsTrigger value="org" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 border-l border-slate-200/70 dark:border-slate-800/70 ml-1">
+                <Users className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Team</span>
+              </TabsTrigger>
+              <TabsTrigger value="apikeys" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Key className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">API Keys</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
+        </Tabs>
       </header>
 
       {/* Main Content */}
@@ -774,7 +798,7 @@ export default function Home() {
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="flex-1 flex flex-col">
           {/* CHAT TAB */}
           <TabsContent value="chat" className="flex-1 m-0 data-[state=inactive]:hidden">
-            <div className="flex h-[calc(100vh-4rem)]">
+            <div className="flex h-[calc(100vh-7rem)]">
               {/* Sidebar: Sessions */}
               <aside className="hidden md:flex w-72 flex-col border-r border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-950/60">
                 <div className="p-3">
@@ -920,7 +944,7 @@ export default function Home() {
 
                 {/* Messages */}
                 <div ref={scrollRef} className="flex-1 overflow-y-auto">
-                  <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+                  <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
                     {messages.length === 0 && !sending && (
                       <EmptyChatState providers={providers} onTry={(t) => setInput(t)} />
                     )}
@@ -939,8 +963,8 @@ export default function Home() {
                 </div>
 
                 {/* Composer */}
-                <div className="border-t border-slate-200 dark:border-slate-800 p-3 bg-white/80 dark:bg-slate-950/80 backdrop-blur">
-                  <div className="max-w-3xl mx-auto">
+                <div className="border-t border-slate-200 dark:border-slate-800 p-4 bg-white/80 dark:bg-slate-950/80 backdrop-blur">
+                  <div className="max-w-4xl mx-auto">
                     {/* Failover / fallback events are no longer surfaced as
                         popups in the chat view — they're logged to the
                         "Failover Log" tab instead, keeping the chat clean. */}
@@ -951,7 +975,7 @@ export default function Home() {
                         onKeyDown={onKeyDown}
                         placeholder={`Send a message to ${activeProvider?.displayName ?? "Marq AI"}…  (Enter to send, Shift+Enter for newline)`}
                         rows={1}
-                        className="resize-none min-h-[44px] max-h-40 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 focus-visible:ring-emerald-500"
+                        className="resize-none min-h-[48px] max-h-40 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 focus-visible:ring-emerald-500"
                         disabled={sending}
                       />
                       <Button
@@ -995,6 +1019,18 @@ export default function Home() {
             <ProviderGuidePanel
               onUsePrompt={(prompt) => { setInput(prompt); setTab("chat"); }}
             />
+          </TabsContent>
+
+          {/* AI DIRECTORY TAB — catalog of every integrated AI */}
+          <TabsContent value="directory" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <AIDirectoryPanel
+              onUsePrompt={(prompt) => { setInput(prompt); setTab("chat"); }}
+            />
+          </TabsContent>
+
+          {/* AI ANALYTICS DASHBOARD TAB — admin-only graphical health/usage dashboard */}
+          <TabsContent value="analytics" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <AIAnalyticsDashboard />
           </TabsContent>
 
           {/* HEALTH TAB */}

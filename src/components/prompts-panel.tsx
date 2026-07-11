@@ -123,7 +123,7 @@ export function PromptsPanel({ onUse }: PromptsPanelProps) {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-4">
+    <div className="p-6 md:p-8 max-w-6xl mx-auto space-y-5">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
@@ -164,14 +164,14 @@ export function PromptsPanel({ onUse }: PromptsPanelProps) {
               No prompts yet. Click "New prompt" to save your first reusable prompt.
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 gap-3">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {prompts.map((p) => (
                 <Card key={p.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex-1">
                         <div className="font-medium text-sm">{p.title}</div>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                           <Badge variant="outline" className="text-xs">{p.category}</Badge>
                           {p.tags && p.tags.split(",").filter(Boolean).map((t) => (
                             <Badge key={t} variant="secondary" className="text-xs">{t.trim()}</Badge>
@@ -179,7 +179,7 @@ export function PromptsPanel({ onUse }: PromptsPanelProps) {
                         </div>
                       </div>
                     </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-3 mb-3 whitespace-pre-wrap">
+                    <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-4 mb-3 whitespace-pre-wrap">
                       {p.body}
                     </p>
                     <div className="flex items-center gap-1 text-xs">
