@@ -43,7 +43,7 @@ export interface AgentRunResult {
   totalTokensUsed: number;
 }
 
-interface ParsedStep {
+export interface ParsedStep {
   thought: string;
   action: string | null;       // tool name, "final_answer", or null on parse error
   actionInput: unknown;        // parsed tool input
@@ -342,7 +342,7 @@ async function finishTask(taskId: string, result: AgentRunResult): Promise<Agent
  * parser expects, which surfaces as "Response did not contain
  * FINAL_ANSWER or ACTION/ACTION_INPUT" errors.
  */
-function buildSystemPrompt(goal: string, template: { displayName: string; persona: string; tools: string[] }): string {
+export function buildSystemPrompt(goal: string, template: { displayName: string; persona: string; tools: string[] }): string {
   // Truncate the persona so the format rules never get buried. We keep the
   // first 4500 chars (enough for almost all skills' core instructions) and
   // append a clear truncation marker if we had to cut.
@@ -481,7 +481,7 @@ function buildHistory(systemPrompt: string, priorSteps: Array<{
  * ACTION/ACTION_INPUT" error. This parser strips code fences first, then
  * tries several match strategies before giving up.
  */
-function parseStepResponse(raw: string): ParsedStep {
+export function parseStepResponse(raw: string): ParsedStep {
   // 1. Strip markdown code fences if present. Models often wrap the whole
   //    response in ```text ... ``` despite being told not to.
   const stripped = stripCodeFences(raw);

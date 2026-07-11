@@ -186,10 +186,16 @@ model ChatSession {
   orgId       String?
   org         Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
   title       String   @default("New Conversation")
+  // When non-null, this session is an agent chat (multi-turn ReAct loop)
+  // driven by the persona identified by agentType. When null, it's a
+  // regular chat session (direct LLM call, no tools).
+  agentType   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   messages    Message[]
+
+  @@index([orgId, agentType, updatedAt])
 }
 
 model Message {
@@ -205,6 +211,9 @@ model Message {
   tokensUsed         Int?
   failedOver         Boolean    @default(false)
   originalProviderId String?
+  // For agent messages: JSON-serialized ReAct step trace so the UI can
+  // render the "show steps" expander under each assistant bubble.
+  agentSteps         String?
   createdAt          DateTime   @default(now())
 
   @@index([sessionId, createdAt])
