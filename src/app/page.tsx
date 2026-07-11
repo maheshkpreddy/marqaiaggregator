@@ -189,14 +189,29 @@ interface AgentTool {
   examples?: string[];
 }
 
+type AgentTemplateCategory =
+  | "engineering"
+  | "business"
+  | "operations"
+  | "general"
+  | "agent_arch"
+  | "marq_products"
+  | "sales"
+  | "consulting"
+  | "security"
+  | "marketing"
+  | "strategy"
+  | "sports";
+
 interface AgentTemplate {
   key: string;
   displayName: string;
   tagline: string;
   description: string;
+  /** Lucide icon name OR a single-emoji string rendered directly. */
   icon: string;
   color: string;
-  category: "engineering" | "business" | "operations" | "general";
+  category: AgentTemplateCategory;
   defaultMaxSteps: number;
   tools: AgentTool[];
   suggestedGoals: string[];
@@ -1046,9 +1061,28 @@ const templateIconMap: Record<string, typeof Sparkles> = {
   Brain,
 };
 
+/**
+ * Render a template icon. Curated templates use Lucide icon names (resolved
+ * via `templateIconMap`); reference templates imported from the Skills
+ * Platform use single-emoji strings (e.g. "🤖", "💰"), which we render
+ * directly as a glyph so the visual identity from the source catalog is
+ * preserved.
+ */
 function TemplateIcon({ name, className, style }: { name: string; className?: string; style?: React.CSSProperties }) {
-  const Icon = templateIconMap[name] ?? Sparkles;
-  return <Icon className={className} style={style} />;
+  const Icon = templateIconMap[name];
+  if (Icon) return <Icon className={className} style={style} />;
+  // Fallback: render the raw string (emoji or single char) as a glyph.
+  // Width/height matches the Lucide size by default (1em).
+  return (
+    <span
+      className={className}
+      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1, ...style }}
+      role="img"
+      aria-hidden
+    >
+      {name}
+    </span>
+  );
 }
 
 const taskStatusMeta: Record<AgentTask["status"], { label: string; color: string; icon: typeof CheckCircle2 }> = {
@@ -1076,6 +1110,11 @@ function AgentPanel({
   const [primaryProviderId, setPrimaryProviderId] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [loadingTasks, setLoadingTasks] = useState(true);
+  // Search + category filter for the template picker. With 147 templates
+  // (8 curated + 139 imported from the Skills Platform), the picker needs
+  // both filters to stay usable.
+  const [tplSearch, setTplSearch] = useState("");
+  const [tplCategoryFilter, setTplCategoryFilter] = useState<string | "all">("all");
 
   const selectedTemplate = templates.find((t) => t.key === selectedTemplateKey) ?? templates[0];
 
@@ -1229,19 +1268,61 @@ function AgentPanel({
     toast({ title: "Task deleted" });
   };
 
-  // Group templates by category for display.
+  // Group templates by category for display. With 147 templates, the picker
+  // also supports search + category filtering.
+  const categoryLabels: Record<string, string> = {
+    general: "General",
+    agent_arch: "AI Agent Architecture",
+    engineering: "Engineering & DevOps",
+    marq_products: "Marq AI Products",
+    sales: "Sales & Revenue",
+    consulting: "Consulting",
+    business: "Business",
+    security: "Security & Compliance",
+    marketing: "Marketing & Content",
+    strategy: "Strategy & Finance",
+    operations: "Operations & People",
+    sports: "Sports & Entertainment",
+  };
+  const categoryOrder: string[] = [
+    "general",
+    "agent_arch",
+    "engineering",
+    "marq_products",
+    "sales",
+    "consulting",
+    "business",
+    "security",
+    "marketing",
+    "strategy",
+    "operations",
+    "sports",
+  ];
+
+  // Apply search + category filter before grouping.
+  const searchQ = tplSearch.trim().toLowerCase();
+  const visibleTemplates = templates.filter((t) => {
+    if (tplCategoryFilter !== "all" && t.category !== tplCategoryFilter) return false;
+    if (!searchQ) return true;
+    return (
+      t.displayName.toLowerCase().includes(searchQ) ||
+      t.tagline.toLowerCase().includes(searchQ) ||
+      t.description.toLowerCase().includes(searchQ) ||
+      t.key.toLowerCase().includes(searchQ)
+    );
+  });
+
   const templatesByCategory: Record<string, AgentTemplate[]> = {};
-  for (const t of templates) {
+  for (const t of visibleTemplates) {
     if (!templatesByCategory[t.category]) templatesByCategory[t.category] = [];
     templatesByCategory[t.category].push(t);
   }
-  const categoryLabels: Record<string, string> = {
-    engineering: "Engineering",
-    business: "Business",
-    operations: "Operations",
-    general: "General",
-  };
-  const categoryOrder = ["engineering", "business", "operations", "general"];
+
+  // Count templates per category for the filter pills.
+  const categoryCounts: Record<string, number> = {};
+  for (const t of templates) {
+    categoryCounts[t.category] = (categoryCounts[t.category] ?? 0) + 1;
+  }
 
   // Client-side task filter (show all when "general" is selected, otherwise
   // show tasks matching the selected template type).
@@ -1258,8 +1339,9 @@ function AgentPanel({
           Agent Workspace
         </h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Pick an agent persona — full-stack developer, testing, business analyst, sales, DevOps, and more.
-          Each agent runs the same ReAct loop with the same failover engine as chat: if one provider fails mid-task, the next takes over.
+          {templates.length} agent personas across {categoryOrder.filter((c) => categoryCounts[c]).length} categories —
+          full-stack developer, sales, DevOps, marketing, security, sports analytics, and many more, imported from
+          the Marq AI Skills Platform. Each runs the same ReAct loop with the same failover engine as chat.
         </p>
       </div>
 
@@ -1282,59 +1364,119 @@ function AgentPanel({
               Loading agent templates…
             </div>
           ) : (
-            <div className="space-y-4">
-              {categoryOrder
-                .filter((cat) => templatesByCategory[cat]?.length)
-                .map((cat) => (
-                  <div key={cat}>
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
-                      {categoryLabels[cat]}
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                      {templatesByCategory[cat].map((t) => {
-                        const isSelected = t.key === selectedTemplateKey;
-                        return (
-                          <button
-                            key={t.key}
-                            onClick={() => setSelectedTemplateKey(t.key)}
-                            disabled={running}
-                            className={`text-left p-3 rounded-lg border transition-all group disabled:opacity-50 disabled:cursor-not-allowed ${
-                              isSelected
-                                ? "bg-white dark:bg-slate-900 shadow-sm"
-                                : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50"
-                            }`}
-                            style={isSelected ? { borderColor: t.color, boxShadow: `0 0 0 1px ${t.color}` } : undefined}
-                          >
-                            <div className="flex items-start gap-2">
-                              <div
-                                className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                                style={{ backgroundColor: `${t.color}15`, color: t.color }}
-                              >
-                                <TemplateIcon name={t.icon} className="w-4 h-4" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-sm font-semibold truncate" style={isSelected ? { color: t.color } : undefined}>
-                                    {t.displayName}
-                                  </span>
-                                  {isSelected && (
-                                    <CheckCircle2 className="w-3 h-3 flex-shrink-0" style={{ color: t.color }} />
-                                  )}
-                                </div>
-                                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug">
-                                  {t.tagline}
-                                </div>
-                                <div className="text-[10px] text-slate-400 mt-1.5">
-                                  {t.tools.length} tool{t.tools.length !== 1 ? "s" : ""} • {t.defaultMaxSteps} step max
-                                </div>
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
+            <div className="space-y-3">
+              {/* Search row */}
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={tplSearch}
+                    onChange={(e) => setTplSearch(e.target.value)}
+                    placeholder={`Search ${templates.length} agents by name, keyword, or description…`}
+                    className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 dark:border-slate-800 rounded-md bg-transparent focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                  />
+                </div>
+                <div className="text-[11px] text-slate-400 whitespace-nowrap">
+                  {visibleTemplates.length} of {templates.length} shown
+                </div>
+              </div>
+
+              {/* Category filter pills */}
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => setTplCategoryFilter("all")}
+                  className={`px-2.5 py-1 text-[11px] rounded-full border transition-colors ${
+                    tplCategoryFilter === "all"
+                      ? "bg-emerald-500 text-white border-emerald-500"
+                      : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                  }`}
+                >
+                  All ({templates.length})
+                </button>
+                {categoryOrder
+                  .filter((c) => categoryCounts[c])
+                  .map((c) => {
+                    const active = tplCategoryFilter === c;
+                    return (
+                      <button
+                        key={c}
+                        onClick={() => setTplCategoryFilter(active ? "all" : c)}
+                        className={`px-2.5 py-1 text-[11px] rounded-full border transition-colors ${
+                          active
+                            ? "bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-900 dark:border-white"
+                            : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-slate-300"
+                        }`}
+                      >
+                        {categoryLabels[c]} ({categoryCounts[c]})
+                      </button>
+                    );
+                  })}
+              </div>
+
+              {/* Scrollable template grid grouped by category */}
+              <div className="max-h-[560px] overflow-y-auto pr-1 -mr-1 space-y-4 rounded-md">
+                {categoryOrder
+                  .filter((cat) => templatesByCategory[cat]?.length)
+                  .length === 0 ? (
+                  <div className="text-center text-xs text-slate-500 py-8">
+                    No agents match your search.
                   </div>
-                ))}
+                ) : (
+                  categoryOrder
+                    .filter((cat) => templatesByCategory[cat]?.length)
+                    .map((cat) => (
+                      <div key={cat}>
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                          {categoryLabels[cat]} · {templatesByCategory[cat].length}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                          {templatesByCategory[cat].map((t) => {
+                            const isSelected = t.key === selectedTemplateKey;
+                            return (
+                              <button
+                                key={t.key}
+                                onClick={() => setSelectedTemplateKey(t.key)}
+                                disabled={running}
+                                className={`text-left p-3 rounded-lg border transition-all group disabled:opacity-50 disabled:cursor-not-allowed ${
+                                  isSelected
+                                    ? "bg-white dark:bg-slate-900 shadow-sm"
+                                    : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50"
+                                }`}
+                                style={isSelected ? { borderColor: t.color, boxShadow: `0 0 0 1px ${t.color}` } : undefined}
+                              >
+                                <div className="flex items-start gap-2">
+                                  <div
+                                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-base"
+                                    style={{ backgroundColor: `${t.color}15`, color: t.color }}
+                                  >
+                                    <TemplateIcon name={t.icon} className="w-4 h-4" />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-sm font-semibold truncate" style={isSelected ? { color: t.color } : undefined}>
+                                        {t.displayName}
+                                      </span>
+                                      {isSelected && (
+                                        <CheckCircle2 className="w-3 h-3 flex-shrink-0" style={{ color: t.color }} />
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-snug line-clamp-2">
+                                      {t.tagline}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 mt-1.5">
+                                      {t.tools.length} tool{t.tools.length !== 1 ? "s" : ""} • {t.defaultMaxSteps} step max
+                                    </div>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
             </div>
           )}
         </CardContent>

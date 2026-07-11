@@ -1,13 +1,11 @@
 /**
  * Marq AI Aggregator — Agent Templates
  *
- * A "template" is a pre-built agent persona (Full-Stack Developer, Testing,
- * Business Analyst, Sales, DevOps, Research, Product Manager, General). Each
- * template pins:
+ * A "template" is a pre-built agent persona. Each template pins:
  *
  *   - A system-prompt preamble that shapes the agent's voice and expertise.
- *   - A whitelist of tools the agent is allowed to call (so a Sales Agent
- *     doesn't try to run_tests, and a Testing Agent doesn't calculate_revenue).
+ *   - A whitelist of tools the agent is allowed to call (so a Sales agent
+ *     doesn't try to run_tests, and a Testing agent doesn't calculate_revenue).
  *   - A default step budget.
  *   - A list of suggested goals the UI can offer as one-click starters.
  *
@@ -15,7 +13,55 @@
  * every other template — so a Full-Stack Developer agent on Claude that hits
  * a rate limit transparently continues on Gemini or OpenAI without losing
  * its scratchpad.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * TEMPLATE SOURCES
+ * ─────────────────────────────────────────────────────────────────────────
+ * This file ships TWO sources of templates, merged into one registry:
+ *
+ *   1. CURATED TEMPLATES (below) — 8 hand-tuned personas (general,
+ *      fullstack_dev, testing, devops, business_analyst, sales,
+ *      product_manager, research). These have hand-written system prompts,
+ *      hand-picked tool whitelists, and curated suggested goals. They are
+ *      the originals shipped with the platform and are kept as-is for
+ *      backwards compatibility (existing AgentTask rows reference these
+ *      keys).
+ *
+ *   2. REFERENCE TEMPLATES (from ./agent-templates-data.json) — 139
+ *      templates imported from the Marq AI Skills Platform
+ *      (https://marqaiskills.vercel.app). Each one is a production-ready
+ *      skill prompt covering a specific business / engineering / ops /
+ *      sports use case. They are grouped into 10 categories that extend
+ *      the original 4-category union.
+ *
+ * Total: 147 templates available out-of-the-box. All run through the same
+ * ReAct loop, the same tool registry, and the same per-step failover engine.
  */
+
+// JSON import is resolved at build time by Next.js / TypeScript — no I/O at
+// runtime. The file is checked into the repo alongside this TS file.
+import referenceTemplates from "./agent-templates-data.json";
+
+/**
+ * Full category union. The first 4 entries (`engineering`, `business`,
+ * `operations`, `general`) are the original categories. The remaining 10
+ * (`agent_arch`, `marq_products`, `sales`, `consulting`, `security`,
+ * `marketing`, `strategy`, `sports`) come from the reference Skills
+ * Platform and are listed in display order in the UI.
+ */
+export type AgentTemplateCategory =
+  | "engineering"
+  | "business"
+  | "operations"
+  | "general"
+  | "agent_arch"
+  | "marq_products"
+  | "sales"
+  | "consulting"
+  | "security"
+  | "marketing"
+  | "strategy"
+  | "sports";
 
 export interface AgentTemplate {
   /** Stable key stored on AgentTask.agentType. */
@@ -26,12 +72,16 @@ export interface AgentTemplate {
   tagline: string;
   /** Longer description shown when the template is selected. */
   description: string;
-  /** Lucide icon name (resolved in the UI via a name→component map). */
+  /**
+   * Icon specifier. Either a Lucide icon name (resolved by the UI's
+   * `templateIconMap`) OR a single-emoji string (e.g. "🤖") which the UI
+   * renders directly as a glyph. Reference-site templates use emoji icons.
+   */
   icon: string;
   /** Tailwind-friendly hex color for badges, borders, accents. */
   color: string;
   /** Category for grouping in the UI. */
-  category: "engineering" | "business" | "operations" | "general";
+  category: AgentTemplateCategory;
   /** Default max steps for new tasks of this type (1..15). */
   defaultMaxSteps: number;
   /** Tool names this agent is allowed to call. Must be a subset of TOOLS. */
@@ -42,10 +92,11 @@ export interface AgentTemplate {
   suggestedGoals: string[];
 }
 
-export const AGENT_TEMPLATES: AgentTemplate[] = [
-  // ─────────────────────────────────────────────────────────────
-  // General
-  // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────
+// 1. CURATED TEMPLATES (8) — hand-written, original personas.
+// ─────────────────────────────────────────────────────────────────────────
+const CURATED_TEMPLATES: AgentTemplate[] = [
+  // ── General ──────────────────────────────────────────────────────
   {
     key: "general",
     displayName: "General Assistant",
@@ -80,9 +131,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     ],
   },
 
-  // ─────────────────────────────────────────────────────────────
-  // Engineering
-  // ─────────────────────────────────────────────────────────────
+  // ── Engineering ──────────────────────────────────────────────────
   {
     key: "fullstack_dev",
     displayName: "Full-Stack Developer",
@@ -175,9 +224,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     ],
   },
 
-  // ─────────────────────────────────────────────────────────────
-  // Business
-  // ─────────────────────────────────────────────────────────────
+  // ── Business ─────────────────────────────────────────────────────
   {
     key: "business_analyst",
     displayName: "Business Analyst",
@@ -296,6 +343,37 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
   },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────
+// 2. REFERENCE TEMPLATES (139) — imported from the Marq AI Skills Platform.
+// ─────────────────────────────────────────────────────────────────────────
+// Cast the JSON import to AgentTemplate[]. The JSON is generated by
+// scripts/gen-agent-templates-from-marqai-skills.py from the public skills
+// catalog at https://marqaiskills.vercel.app/api/skills. Each entry already
+// matches the AgentTemplate shape; we drop the `sourceCategory` debug field.
+const REFERENCE_TEMPLATES: AgentTemplate[] = (referenceTemplates as Array<
+  Omit<AgentTemplate, "category"> & {
+    category: AgentTemplateCategory;
+    sourceCategory?: string;
+  }
+>).map(({ sourceCategory: _drop, ...tpl }) => tpl);
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3. MERGED REGISTRY
+// ─────────────────────────────────────────────────────────────────────────
+// Curated templates come first (so `general` is the default fallback), then
+// all 139 reference templates. If a future reference import ever produces a
+// key that collides with a curated key, the curated one wins (we filter out
+// the duplicate).
+const CURATED_KEYS = new Set(CURATED_TEMPLATES.map((t) => t.key));
+const DEDUPED_REFERENCE = REFERENCE_TEMPLATES.filter(
+  (t) => !CURATED_KEYS.has(t.key),
+);
+
+export const AGENT_TEMPLATES: AgentTemplate[] = [
+  ...CURATED_TEMPLATES,
+  ...DEDUPED_REFERENCE,
+];
+
 /** Quick lookup by key. */
 export const TEMPLATE_MAP: Record<string, AgentTemplate> = Object.fromEntries(
   AGENT_TEMPLATES.map((t) => [t.key, t]),
@@ -309,3 +387,39 @@ export function getTemplate(key: string | null | undefined): AgentTemplate {
 
 /** List of all template keys (for validation in API routes). */
 export const TEMPLATE_KEYS = AGENT_TEMPLATES.map((t) => t.key);
+
+/**
+ * Display metadata for every category, in the order the UI should render
+ * them. The first 4 are the original curated categories; the remaining 10
+ * come from the reference Skills Platform.
+ */
+export const CATEGORY_LABELS: Record<AgentTemplateCategory, string> = {
+  general: "General",
+  engineering: "Engineering & DevOps",
+  business: "Business",
+  operations: "Operations & People",
+  agent_arch: "AI Agent Architecture",
+  marq_products: "Marq AI Products",
+  sales: "Sales & Revenue",
+  consulting: "Consulting",
+  security: "Security & Compliance",
+  marketing: "Marketing & Content",
+  strategy: "Strategy & Finance",
+  sports: "Sports & Entertainment",
+};
+
+/** Render order for categories in the picker (General first, then topical). */
+export const CATEGORY_ORDER: AgentTemplateCategory[] = [
+  "general",
+  "agent_arch",
+  "engineering",
+  "marq_products",
+  "sales",
+  "consulting",
+  "business",
+  "security",
+  "marketing",
+  "strategy",
+  "operations",
+  "sports",
+];
