@@ -25,6 +25,7 @@
 import { db } from "@/lib/db";
 import { runWithFailover } from "@/lib/failover";
 import type { ChatMessage } from "@/lib/providers";
+import { reorderProvidersOpenSourceFirst } from "@/lib/providers";
 import { getTool, toolDescriptionsForPrompt } from "@/lib/tools";
 import { getTemplate, type AgentTemplate } from "@/lib/agent-templates";
 import {
@@ -132,10 +133,15 @@ export async function runAgentChatTurn(opts: AgentChatTurn): Promise<AgentChatRe
   });
 
   // ── 4. Load active providers (with optional pinned primary) ──────
+  // Apply the "open source first" auto-mode policy so free providers
+  // (marq_free, HuggingFace, Ollama, frameworks) are tried before
+  // chargeable APIs. A pinned primary, if set, is moved to the front
+  // AFTER the tier reorder so the user's explicit choice still wins.
   let providers = await db.provider.findMany({
     where: { active: true },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
+  providers = reorderProvidersOpenSourceFirst(providers);
   if (providers.length === 0) {
     return failResult(session.id, "No active providers configured.", template);
   }

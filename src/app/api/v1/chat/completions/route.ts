@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { runWithFailover } from "@/lib/failover";
 import { authApiKey } from "@/lib/auth";
 import type { ChatMessage } from "@/lib/providers";
+import { reorderProvidersOpenSourceFirst } from "@/lib/providers";
 
 /**
  * POST /api/v1/chat/completions
@@ -54,10 +55,15 @@ export async function POST(req: NextRequest) {
   }
 
   // Load active providers, optionally pinned to the requested primary.
+  // Apply the "open source first" auto-mode policy: free providers are
+  // tried before chargeable APIs so responses stay fast and don't hit the
+  // paid-provider failure path. A pinned primary, if set, is moved to the
+  // front AFTER the tier reorder.
   let providers = await db.provider.findMany({
     where: { active: true },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
+  providers = reorderProvidersOpenSourceFirst(providers);
   if (providers.length === 0) {
     return NextResponse.json({ error: "No active providers configured" }, { status: 503 });
   }

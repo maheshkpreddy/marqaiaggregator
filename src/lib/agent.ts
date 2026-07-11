@@ -21,7 +21,7 @@
 import { db } from "@/lib/db";
 import { runWithFailover } from "@/lib/failover";
 import type { ChatMessage, FailoverReason } from "@/lib/providers";
-import { ProviderError } from "@/lib/providers";
+import { ProviderError, reorderProvidersOpenSourceFirst } from "@/lib/providers";
 import { getTool, toolDescriptionsForPrompt } from "@/lib/tools";
 import { getTemplate } from "@/lib/agent-templates";
 
@@ -72,10 +72,16 @@ export async function runAgentTask(opts: AgentRunOptions): Promise<AgentRunResul
   const timeoutMs = opts.timeoutMs ?? 25000;
 
   // Load active providers ordered by priority (with optional pinned primary).
+  // Apply the "open source first" auto-mode policy: free providers (marq_free,
+  // HuggingFace, Ollama, frameworks) are tried before chargeable APIs so the
+  // user gets fast responses with no failover lag. If a primary provider is
+  // pinned by the task, it still wins — we just move it to the front AFTER
+  // the tier reorder.
   let providers = await db.provider.findMany({
     where: { active: true },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
+  providers = reorderProvidersOpenSourceFirst(providers);
   if (providers.length === 0) {
     return finishTask(task.id, {
       status: "failed",

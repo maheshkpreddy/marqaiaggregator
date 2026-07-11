@@ -42,63 +42,34 @@ async function main() {
   }
 
   const providers = [
+    // ── TIER 1 — Open-source / free providers (tried first in auto mode) ──
+    // These providers don't require per-token billing. marq_free is always
+    // available (Pollinations anonymous tier); the rest are open-source
+    // frameworks / local runtimes that work without paid API keys.
     {
-      name: "openai",
-      displayName: "OpenAI",
-      description: "GPT-4o, GPT-4 Turbo, GPT-3.5 Turbo and o-series reasoning models. Strong general-purpose reasoning, code generation, and tool use.",
-      apiEndpoint: "https://api.openai.com/v1/chat/completions",
-      apiKey: null,
-      models: JSON.stringify(["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "o1-mini"]),
+      name: "marq_free",
+      displayName: "Marq Free (Always-On)",
+      description:
+        "Marq Free — the platform's GUARANTEED-AVAILABILITY provider backed by Pollinations.ai. " +
+        "No API key required, no rate limits to worry about. Uses open-source models (gpt-oss-20b and others) to deliver real AI responses when every paid provider is down or rate-limited. " +
+        "Seeded at the HIGHEST priority so the failover engine tries it FIRST in auto mode — ensuring the platform responds fast and never throws a fallback error to the user.",
+      apiEndpoint: "https://text.pollinations.ai/openai",
+      apiKey: null, // No key needed — Pollinations has a free anonymous tier.
+      models: JSON.stringify(["openai", "openai-large", "mistral", "qwen-coder"]),
       active: true,
-      priority: 0,
-      color: "#10a37f",
-      icon: "openai",
-    },
-    {
-      name: "gemini",
-      displayName: "Google Gemini",
-      description: "Gemini 2.5 Flash, Gemini 2.5 Pro. Long-context multimodal reasoning, strong at grounded factual answers and code.",
-      apiEndpoint: "https://generativelanguage.googleapis.com/v1beta/models",
-      apiKey: null,
-      models: JSON.stringify(["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash-lite"]),
-      active: true,
-      priority: 1,
-      color: "#4285f4",
-      icon: "gemini",
-    },
-    {
-      name: "claude",
-      displayName: "Anthropic Claude",
-      description: "Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku. Excellent for long-form writing, careful reasoning, and safety-aligned tasks.",
-      apiEndpoint: "https://api.anthropic.com/v1/messages",
-      apiKey: null,
-      models: JSON.stringify(["claude-3-5-sonnet", "claude-3-opus", "claude-3-haiku"]),
-      active: true,
-      priority: 2,
-      color: "#d97757",
-      icon: "claude",
-    },
-    {
-      name: "grok",
-      displayName: "xAI Grok",
-      description: "Grok-2, Grok-2-mini. Real-time-aware assistant with a witty, irreverent voice. OpenAI-compatible API at api.x.ai.",
-      apiEndpoint: "https://api.x.ai/v1/chat/completions",
-      apiKey: null,
-      models: JSON.stringify(["grok-2", "grok-2-mini", "grok-beta"]),
-      active: true,
-      priority: 3,
-      color: "#1d9bf0",
-      icon: "sparkles",
+      priority: 0, // HIGHEST — tried first by the failover engine.
+      color: "#10b981",
+      icon: "shield",
     },
     {
       name: "huggingface",
       displayName: "Hugging Face",
-      description: "Open-source model zoo — Llama 3.1, Mistral, Phi-3, CodeLlama, BGE embeddings. Serverless Inference API for thousands of Hub models.",
+      description: "Open-source model zoo — Llama 3.1, Mistral, Phi-3, CodeLlama, BGE embeddings. Serverless Inference API for thousands of Hub models. Free anonymous tier available.",
       apiEndpoint: "https://api-inference.huggingface.co/models",
       apiKey: null,
       models: JSON.stringify(["meta-llama/Llama-3.1-8B-Instruct", "mistralai/Mistral-7B-Instruct-v0.3", "microsoft/Phi-3-mini-4k-instruct"]),
       active: true,
-      priority: 4,
+      priority: 1,
       color: "#ff9d00",
       icon: "bot",
     },
@@ -110,33 +81,9 @@ async function main() {
       apiKey: null,
       models: JSON.stringify(["llama3.1", "mistral", "phi3", "qwen2.5", "gemma2"]),
       active: true,
-      priority: 5,
+      priority: 2,
       color: "#22c55e",
       icon: "hard-drive",
-    },
-    {
-      name: "replit",
-      displayName: "Replit",
-      description: "Replit Code v1.5 — collaborative cloud IDE coding model tuned for short, runnable snippets with inline explanations.",
-      apiEndpoint: "https://model-proxy.replit.com/v1/chat/completions",
-      apiKey: null,
-      models: JSON.stringify(["replit-code-v1_5-3b", "replit-code-v1_5-7b"]),
-      active: true,
-      priority: 6,
-      color: "#f26207",
-      icon: "code",
-    },
-    {
-      name: "modal",
-      displayName: "Modal (Serverless)",
-      description: "Serverless inference platform — package any model as a scalable Modal function. OpenAI-compatible gateway for custom-deployed models.",
-      apiEndpoint: "https://modal.com/v1/chat/completions",
-      apiKey: null,
-      models: JSON.stringify(["marq-modal-default", "llama-3.1-70b-modal", "mixtral-8x7b-modal"]),
-      active: true,
-      priority: 7,
-      color: "#7c3aed",
-      icon: "server",
     },
     {
       name: "gradio",
@@ -146,7 +93,7 @@ async function main() {
       apiKey: null,
       models: JSON.stringify(["marq-gradio-default", "whisper-gradio", "stable-diffusion-gradio"]),
       active: true,
-      priority: 8,
+      priority: 3,
       color: "#f97316",
       icon: "layout",
     },
@@ -158,7 +105,7 @@ async function main() {
       apiKey: null,
       models: JSON.stringify(["marq-mlflow-default", "llama-3.1-registered", "mistral-registered"]),
       active: true,
-      priority: 9,
+      priority: 4,
       color: "#0ea5e9",
       icon: "database",
     },
@@ -170,7 +117,7 @@ async function main() {
       apiKey: null,
       models: JSON.stringify(["marq-crewai-orchestrator", "researcher-writer-crew", "dev-qa-ops-crew"]),
       active: true,
-      priority: 10,
+      priority: 5,
       color: "#ec4899",
       icon: "users",
     },
@@ -182,31 +129,47 @@ async function main() {
       apiKey: null,
       models: JSON.stringify(["marq-langchain-default", "rag-chain", "tool-use-chain"]),
       active: true,
-      priority: 11,
+      priority: 6,
       color: "#14b8a6",
       icon: "link",
     },
     {
-      name: "qvac",
-      displayName: "Qvac Quantum-Inspired",
-      description: "Quantum-inspired parallel reasoning — explores multiple solution paths simultaneously and recommends the most defensible one.",
-      apiEndpoint: "https://api.qvac.ai/v1/chat/completions",
+      name: "replit",
+      displayName: "Replit",
+      description: "Replit Code v1.5 — collaborative cloud IDE coding model tuned for short, runnable snippets with inline explanations. replit-code is open weights.",
+      apiEndpoint: "https://model-proxy.replit.com/v1/chat/completions",
       apiKey: null,
-      models: JSON.stringify(["marq-qvac-default", "qvac-reason-v1", "qvac-decide-v1"]),
+      models: JSON.stringify(["replit-code-v1_5-3b", "replit-code-v1_5-7b"]),
       active: true,
-      priority: 12,
-      color: "#8b5cf6",
-      icon: "atom",
+      priority: 7,
+      color: "#f26207",
+      icon: "code",
     },
+    {
+      name: "modal",
+      displayName: "Modal (Serverless)",
+      description: "Open-source serverless inference platform — package any model as a scalable Modal function. OpenAI-compatible gateway for custom-deployed models.",
+      apiEndpoint: "https://modal.com/v1/chat/completions",
+      apiKey: null,
+      models: JSON.stringify(["marq-modal-default", "llama-3.1-70b-modal", "mixtral-8x7b-modal"]),
+      active: true,
+      priority: 8,
+      color: "#7c3aed",
+      icon: "server",
+    },
+    // ── TIER 2 — Chargeable commercial AI APIs (fallback when open source is exhausted) ──
+    // These providers require API keys and bill per token. Tried AFTER the
+    // open-source tier in auto mode, so they only kick in when the free
+    // providers are unavailable or rate-limited.
     {
       name: "marq_glm",
       displayName: "Marq GLM (Built-in)",
-      description: "Built-in real-LLM provider powered by GLM-4-Plus via the z-ai SDK. Works on Vercel automatically when ZAI_TOKEN env var is set — no API key management needed. This is the recommended default for real chat responses.",
+      description: "Built-in real-LLM provider powered by GLM-4-Plus via the z-ai SDK. Works on Vercel automatically when ZAI_TOKEN env var is set — no API key management needed.",
       apiEndpoint: null,
       apiKey: null,
       models: JSON.stringify(["glm-4-plus", "glm-4-air", "glm-4-long"]),
       active: true,
-      priority: -1, // highest priority — tried first by the failover engine
+      priority: 9,
       color: "#3b82f6",
       icon: "sparkles",
     },
@@ -221,24 +184,69 @@ async function main() {
       apiKey: null,
       models: JSON.stringify(["glm-4-plus", "glm-4-air", "glm-4-long", "glm-4-flash"]),
       active: true,
-      priority: 13,
+      priority: 10,
       color: "#0ea5e9",
       icon: "sparkles",
     },
     {
-      name: "marq_free",
-      displayName: "Marq Free (Always-On)",
-      description:
-        "Marq Free — the platform's GUARANTEED-AVAILABILITY provider backed by Pollinations.ai. " +
-        "No API key required, no rate limits to worry about. Uses open-source models (gpt-oss-20b and others) to deliver real AI responses when every paid provider is down or rate-limited. " +
-        "Seeded at the lowest priority so the failover engine only falls back to it when OpenAI/Claude/Gemini/ZAI are all unavailable — ensuring the platform NEVER throws an error to the user.",
-      apiEndpoint: "https://text.pollinations.ai/openai",
-      apiKey: null, // No key needed — Pollinations has a free anonymous tier.
-      models: JSON.stringify(["openai", "openai-large", "mistral", "qwen-coder"]),
+      name: "openai",
+      displayName: "OpenAI",
+      description: "GPT-4o, GPT-4 Turbo, GPT-3.5 Turbo and o-series reasoning models. Strong general-purpose reasoning, code generation, and tool use.",
+      apiEndpoint: "https://api.openai.com/v1/chat/completions",
+      apiKey: null,
+      models: JSON.stringify(["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "o1-mini"]),
       active: true,
-      priority: 100, // Lowest priority — tried last before the demo fallback.
-      color: "#10b981",
-      icon: "shield",
+      priority: 11,
+      color: "#10a37f",
+      icon: "openai",
+    },
+    {
+      name: "gemini",
+      displayName: "Google Gemini",
+      description: "Gemini 2.5 Flash, Gemini 2.5 Pro. Long-context multimodal reasoning, strong at grounded factual answers and code.",
+      apiEndpoint: "https://generativelanguage.googleapis.com/v1beta/models",
+      apiKey: null,
+      models: JSON.stringify(["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash-lite"]),
+      active: true,
+      priority: 12,
+      color: "#4285f4",
+      icon: "gemini",
+    },
+    {
+      name: "claude",
+      displayName: "Anthropic Claude",
+      description: "Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku. Excellent for long-form writing, careful reasoning, and safety-aligned tasks.",
+      apiEndpoint: "https://api.anthropic.com/v1/messages",
+      apiKey: null,
+      models: JSON.stringify(["claude-3-5-sonnet", "claude-3-opus", "claude-3-haiku"]),
+      active: true,
+      priority: 13,
+      color: "#d97757",
+      icon: "claude",
+    },
+    {
+      name: "grok",
+      displayName: "xAI Grok",
+      description: "Grok-2, Grok-2-mini. Real-time-aware assistant with a witty, irreverent voice. OpenAI-compatible API at api.x.ai.",
+      apiEndpoint: "https://api.x.ai/v1/chat/completions",
+      apiKey: null,
+      models: JSON.stringify(["grok-2", "grok-2-mini", "grok-beta"]),
+      active: true,
+      priority: 14,
+      color: "#1d9bf0",
+      icon: "sparkles",
+    },
+    {
+      name: "qvac",
+      displayName: "Qvac Quantum-Inspired",
+      description: "Quantum-inspired parallel reasoning — explores multiple solution paths simultaneously and recommends the most defensible one.",
+      apiEndpoint: "https://api.qvac.ai/v1/chat/completions",
+      apiKey: null,
+      models: JSON.stringify(["marq-qvac-default", "qvac-reason-v1", "qvac-decide-v1"]),
+      active: true,
+      priority: 15,
+      color: "#8b5cf6",
+      icon: "atom",
     },
   ];
 
@@ -279,8 +287,10 @@ async function main() {
   const existingTasks = await db.agentTask.count();
   if (existingTasks === 0) {
     console.log("  Seeding sample agent tasks per template...");
-    const openaiProvider = await db.provider.findUnique({ where: { name: "openai" } });
-    const primaryProviderId = openaiProvider?.id ?? null;
+    // Don't pin a primary provider on seeded tasks — leave primaryProviderId
+    // null so the failover engine applies the "open source first" auto-mode
+    // policy (marq_free → huggingface → ollama → … → openai → claude → …).
+    const primaryProviderId = null;
 
     // Pick the first suggested goal for each template as the seeded task.
     for (const tpl of AGENT_TEMPLATES) {

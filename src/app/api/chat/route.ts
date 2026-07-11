@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { runWithFailover } from "@/lib/failover";
 import { requireRole } from "@/lib/auth";
 import type { ChatMessage } from "@/lib/providers";
+import { reorderProvidersOpenSourceFirst } from "@/lib/providers";
 
 /**
  * POST /api/chat
@@ -27,10 +28,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
 
+  // Load active providers ordered by priority, then apply the "open source
+  // first" auto-mode policy: free providers (marq_free, HuggingFace, Ollama,
+  // frameworks) are tried before chargeable APIs so the user gets fast
+  // responses with no failover lag. A pinned primary, if provided, is moved
+  // to the front AFTER the tier reorder so the user's explicit choice wins.
   let providers = await db.provider.findMany({
     where: { active: true },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
+  providers = reorderProvidersOpenSourceFirst(providers);
 
   if (providers.length === 0) {
     return NextResponse.json({ error: "No active providers configured" }, { status: 503 });

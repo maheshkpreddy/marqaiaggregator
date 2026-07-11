@@ -186,6 +186,74 @@ export function hasEffectiveApiKey(provider: Provider): boolean {
   return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Provider tier classification — "open source first" auto mode
+// ─────────────────────────────────────────────────────────────────────────
+// The user explicitly asked for open-source / free providers to be tried
+// FIRST in auto mode, with chargeable commercial APIs as a fallback. The
+// reasoning: free providers (Pollinations, Ollama, HuggingFace, open-source
+// frameworks) don't require API keys, don't run into billing/quota issues,
+// and won't trigger failovers — so latency stays low and the user sees a
+// real response on the first attempt.
+//
+// Tier assignment is based on the canonical provider `name` (set by
+// scripts/seed.ts). Custom providers (anything not in the map) default to
+// "paid" so we never accidentally prefer an unknown commercial provider
+// over the guaranteed-free marq_free.
+
+export type ProviderTier = "open_source" | "paid";
+
+const OPEN_SOURCE_PROVIDER_NAMES = new Set<string>([
+  "marq_free",     // Pollinations.ai — free, no-auth, always-on real LLM
+  "huggingface",   // Open-source model zoo (Llama, Mistral, Phi) — free tier
+  "ollama",        // Local open-source models (Llama, Mistral, Phi)
+  "gradio",        // Hugging Face Gradio Spaces — open-source demos
+  "mlflow",        // Open-source MLOps framework
+  "crewai",        // Open-source multi-agent framework
+  "langchain",     // Open-source LLM framework
+  "replit",        // replit-code is open weights
+  "modal",         // Open-source serverless platform (pay-for-compute, not per-token)
+]);
+
+/**
+ * Classify a provider as "open_source" (free / no per-token billing) or
+ * "paid" (chargeable commercial API). Used by the failover engine to order
+ * providers in auto mode so open-source ones are tried first.
+ */
+export function providerTier(provider: { name: string }): ProviderTier {
+  return OPEN_SOURCE_PROVIDER_NAMES.has(provider.name) ? "open_source" : "paid";
+}
+
+/**
+ * Reorder a list of providers so open-source / free providers come FIRST,
+ * then chargeable commercial APIs as fallback. Relative order WITHIN each
+ * tier is preserved (stable partition by tier).
+ *
+ * Use this AFTER loading providers from the DB and BEFORE passing them to
+ * `runWithFailover`. If a primary provider is pinned, move it to the front
+ * AFTER calling this — that way the user's explicit choice still wins, but
+ * the rest of the failover chain follows the open-source-first policy.
+ *
+ * Rationale: in auto mode, the user wants fast, accurate responses with no
+ * lags or fallbacks. Free providers (marq_free especially) are always
+ * available and don't depend on billing state — so trying them first
+ * eliminates the "all paid providers down → demo fallback" scenario.
+ */
+export function reorderProvidersOpenSourceFirst<T extends { name: string }>(
+  providers: T[],
+): T[] {
+  const openSource: T[] = [];
+  const paid: T[] = [];
+  for (const p of providers) {
+    if (OPEN_SOURCE_PROVIDER_NAMES.has(p.name)) {
+      openSource.push(p);
+    } else {
+      paid.push(p);
+    }
+  }
+  return [...openSource, ...paid];
+}
+
 /**
  * Demo-mode call: generates a canned response locally.
  *
