@@ -326,40 +326,80 @@ async function finishTask(taskId: string, result: AgentRunResult): Promise<Agent
 // Prompt building
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Build the system prompt for one agent iteration.
+ *
+ * IMPORTANT — the order of sections matters. The LLM attends most to the
+ * TOP of the prompt and the BOTTOM of the prompt. We deliberately put the
+ * strict ReAct format rules at the very top, then the skill/persona context
+ * in the middle (truncated if it's huge — some imported skills ship
+ * 15KB+ of markdown which would otherwise bury the format rules), then the
+ * user's goal + a one-shot example + a final reminder at the bottom.
+ *
+ * Without this ordering, long imported skill personas cause the LLM to
+ * respond in regular prose/markdown (its natural style for "following a
+ * skill") instead of the strict THOUGHT/ACTION/ACTION_INPUT format the
+ * parser expects, which surfaces as "Response did not contain
+ * FINAL_ANSWER or ACTION/ACTION_INPUT" errors.
+ */
 function buildSystemPrompt(goal: string, template: { displayName: string; persona: string; tools: string[] }): string {
+  // Truncate the persona so the format rules never get buried. We keep the
+  // first 4500 chars (enough for almost all skills' core instructions) and
+  // append a clear truncation marker if we had to cut.
+  const PERSONA_CAP = 4500;
+  let persona = template.persona.trim();
+  if (persona.length > PERSONA_CAP) {
+    persona = persona.slice(0, PERSONA_CAP) + "\n\n[…skill instructions truncated for prompt budget; follow the core guidance above…]";
+  }
+
   return [
-    template.persona,
+    "# OUTPUT FORMAT — READ THIS FIRST, IT IS NON-NEGOTIABLE",
     "",
-    "## Available tools",
+    "You are an autonomous ReAct agent. EVERY response you produce MUST match",
+    "EXACTLY ONE of the two formats below. No prose. No markdown headings.",
+    "No explanations before or after. No code fences. Just the format.",
+    "",
+    "Format A — call a tool:",
+    "  THOUGHT: <one or two sentences of reasoning>",
+    "  ACTION: <tool_name>",
+    "  ACTION_INPUT: <one-line JSON object, e.g. {\"query\": \"...\"}>",
+    "",
+    "Format B — give the final answer:",
+    "  THOUGHT: <one or two sentences of reasoning>",
+    "  FINAL_ANSWER: <your answer>",
+    "",
+    "If you have enough information to answer, use Format B. Otherwise use",
+    "Format A to call a tool. Never invent tool names. Never wrap your",
+    "response in ``` code fences. The first non-empty line must start with",
+    "either `THOUGHT:` or `FINAL_ANSWER:`.",
+    "",
+    "## One-shot example",
+    "",
+    "THOUGHT: I need to search the web for the latest news on this topic.",
+    "ACTION: web_search",
+    "ACTION_INPUT: {\"query\": \"latest AI news this week\"}",
+    "",
+    "---",
+    "",
+    "# AGENT PERSONA — " + template.displayName,
+    "",
+    persona,
+    "",
+    "---",
+    "",
+    "## Available tools (only these may appear after ACTION:)",
     "",
     toolDescriptionsForPrompt(template.tools),
-    "",
-    "## How to respond",
-    "",
-    "Respond with EXACTLY ONE of the two formats below. Do not include any other text.",
-    "",
-    "### Format A — Call a tool",
-    "",
-    "THOUGHT: <one or two sentences explaining your reasoning>",
-    "ACTION: <tool_name>",
-    "ACTION_INPUT: <a single JSON object on one line, e.g. {\"query\": \"...\"}>",
-    "",
-    "### Format B — Give the final answer",
-    "",
-    "THOUGHT: <one or two sentences explaining your reasoning>",
-    "FINAL_ANSWER: <your answer to the user>",
-    "",
-    "## Rules",
-    "- Always think before you act. Use THOUGHT to plan.",
-    "- Only call tools listed in the Available tools section above. Do not invent tool names.",
-    "- If you have enough information, give FINAL_ANSWER. Do not call unnecessary tools.",
-    "- ACTION_INPUT must be valid JSON on a single line.",
-    "- If a tool returns an error, try a different approach or give FINAL_ANSWER acknowledging the limitation.",
-    "- Stay in character as the " + template.displayName + " agent.",
     "",
     "## The user's goal",
     "",
     goal,
+    "",
+    "---",
+    "",
+    "## REMINDER",
+    "Respond now with EXACTLY ONE of: (A) THOUGHT/ACTION/ACTION_INPUT, or",
+    "(B) THOUGHT/FINAL_ANSWER. Nothing else. No code fences. No prose.",
   ].join("\n");
 }
 
@@ -394,14 +434,26 @@ function buildHistory(systemPrompt: string, priorSteps: Array<{
       });
       continue;
     }
-    // Parse error step — surface to the LLM so it knows to retry.
+    // Parse error step — surface to the LLM so it knows to retry, with a
+    // STRONG reminder of the exact format. Without this the model often
+    // repeats its prose-style response and the task fails after maxSteps.
     messages.push({
       role: "assistant",
       content: step.thought ?? "(no response)",
     });
     messages.push({
       role: "user",
-      content: "Your previous response did not match the required format. Please respond again using either ACTION or FINAL_ANSWER.",
+      content:
+        "ERROR: Your previous response did not contain THOUGHT/ACTION/ACTION_INPUT or THOUGHT/FINAL_ANSWER.\n\n" +
+        "You MUST respond now using EXACTLY one of these two formats. No prose. No markdown. No code fences.\n\n" +
+        "Option A — call a tool:\n" +
+        "  THOUGHT: <reasoning>\n" +
+        "  ACTION: <tool_name>\n" +
+        "  ACTION_INPUT: {\"key\": \"value\"}\n\n" +
+        "Option B — final answer:\n" +
+        "  THOUGHT: <reasoning>\n" +
+        "  FINAL_ANSWER: <your answer>\n\n" +
+        "Reply now with one of these two formats. The first non-empty line must start with THOUGHT: or FINAL_ANSWER:.",
     });
   }
 
@@ -412,36 +464,57 @@ function buildHistory(systemPrompt: string, priorSteps: Array<{
 // Response parsing
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Parse one LLM response into a structured ReAct step.
+ *
+ * The parser is intentionally lenient. The imported skills-platform
+ * templates have long, prose-heavy personas, and even with strict format
+ * rules at the top of the system prompt, models will sometimes:
+ *   - wrap their response in ``` code fences
+ *   - add a closing remark after FINAL_ANSWER
+ *   - add commentary after the ACTION_INPUT JSON
+ *   - use lowercase or extra whitespace around the markers
+ *   - emit the JSON across multiple lines (pretty-printed)
+ *
+ * Each of those would silently break the original strict regex parser and
+ * surface as the dreaded "Response did not contain FINAL_ANSWER or
+ * ACTION/ACTION_INPUT" error. This parser strips code fences first, then
+ * tries several match strategies before giving up.
+ */
 function parseStepResponse(raw: string): ParsedStep {
-  const trimmed = raw.trim();
+  // 1. Strip markdown code fences if present. Models often wrap the whole
+  //    response in ```text ... ``` despite being told not to.
+  const stripped = stripCodeFences(raw);
+  const trimmed = stripped.trim();
 
-  // Try to extract a FINAL_ANSWER first.
-  const finalMatch = trimmed.match(/FINAL_ANSWER\s*:\s*([\s\S]+?)$/i);
+  // 2. Try to extract FINAL_ANSWER first. We accept it anywhere in the
+  //    response (not just at the end) because some models add a trailing
+  //    "Let me know if you need anything else!" line.
+  //    The match captures everything after the FINAL_ANSWER: marker up to
+  //    either end-of-string or a trailing closing code fence / quote.
+  const finalMatch = trimmed.match(/FINAL_ANSWER\s*:\s*([\s\S]+?)(?:\n```|\s*$)/i);
   if (finalMatch) {
     const thought = extractThought(trimmed);
-    return {
-      thought,
-      action: "final_answer",
-      actionInput: null,
-      finalAnswer: finalMatch[1].trim(),
-      rawResponse: raw,
-    };
+    const finalAnswer = finalMatch[1].trim();
+    if (finalAnswer.length > 0) {
+      return {
+        thought,
+        action: "final_answer",
+        actionInput: null,
+        finalAnswer,
+        rawResponse: raw,
+      };
+    }
   }
 
-  // Otherwise try ACTION / ACTION_INPUT.
+  // 3. Try ACTION / ACTION_INPUT. We accept the JSON object even if there
+  //    is trailing text after it (e.g. trailing commentary, closing fence).
+  //    Strategy: find ACTION: <name>, then find ACTION_INPUT: <json> by
+  //    scanning forward and balancing braces.
   const actionMatch = trimmed.match(/ACTION\s*:\s*([A-Za-z_][A-Za-z0-9_]*)/i);
-  const inputMatch = trimmed.match(/ACTION_INPUT\s*:\s*(\{[\s\S]*?\})\s*$/i);
   if (actionMatch) {
     const actionName = actionMatch[1];
-    let actionInput: unknown = null;
-    if (inputMatch) {
-      try {
-        actionInput = JSON.parse(inputMatch[1]);
-      } catch {
-        // If JSON parsing fails, pass the raw string as { query: ... } as a fallback.
-        actionInput = { _raw: inputMatch[1] };
-      }
-    }
+    const actionInput = extractActionInput(trimmed);
     const thought = extractThought(trimmed);
     return {
       thought,
@@ -452,7 +525,7 @@ function parseStepResponse(raw: string): ParsedStep {
     };
   }
 
-  // Could not parse — return raw as thought, surface parse error.
+  // 4. Could not parse — return raw as thought, surface parse error.
   return {
     thought: trimmed.slice(0, 500),
     action: null,
@@ -461,6 +534,66 @@ function parseStepResponse(raw: string): ParsedStep {
     rawResponse: raw,
     parseError: "Response did not contain FINAL_ANSWER or ACTION/ACTION_INPUT.",
   };
+}
+
+/**
+ * Strip a single outer pair of markdown code fences if the whole response
+ * is wrapped in one. Leaves inner code blocks (e.g. JSON examples inside a
+ * FINAL_ANSWER) untouched.
+ */
+function stripCodeFences(raw: string): string {
+  const trimmed = raw.trim();
+  // Match opening fence ```lang (optional lang) ... closing ```
+  const m = trimmed.match(/^```[a-zA-Z]*\s*\n([\s\S]*?)\n```\s*$/);
+  return m ? m[1] : trimmed;
+}
+
+/**
+ * Extract and JSON-parse the ACTION_INPUT value. Walks the string forward
+ * from the ACTION_INPUT: marker, finds the first `{`, then balances braces
+ * to find the matching `}`. This handles pretty-printed JSON, nested
+ * objects, and trailing commentary after the JSON.
+ *
+ * Returns the parsed object, or { _raw: <string> } if the matched span
+ * isn't valid JSON, or null if no ACTION_INPUT marker was found.
+ */
+function extractActionInput(text: string): unknown {
+  const markerMatch = text.match(/ACTION_INPUT\s*:\s*/i);
+  if (!markerMatch) return null;
+  const startIdx = markerMatch.index! + markerMatch[0].length;
+
+  // Find the first `{` after the marker.
+  const objStart = text.indexOf("{", startIdx);
+  if (objStart === -1) return null;
+
+  // Balance braces, respecting strings.
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = objStart; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        const jsonStr = text.slice(objStart, i + 1);
+        try {
+          return JSON.parse(jsonStr);
+        } catch {
+          return { _raw: jsonStr };
+        }
+      }
+    }
+  }
+  // No balanced close brace — return whatever we have as raw.
+  return { _raw: text.slice(objStart) };
 }
 
 function extractThought(text: string): string {

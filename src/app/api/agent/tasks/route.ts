@@ -4,6 +4,12 @@ import { runAgentTask } from "@/lib/agent";
 import { TEMPLATE_KEYS, TEMPLATE_MAP } from "@/lib/agent-templates";
 import { requireRole, getAuthContext } from "@/lib/auth";
 
+// Agent tasks run a multi-step ReAct loop (up to maxSteps LLM calls in a
+// single HTTP request). Bump the Vercel function timeout from the default
+// 10s to 300s so a 6-8 step task with 30-45s per step can complete.
+export const maxDuration = 300;
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/agent/tasks
  * List agent tasks for the active org, newest first.
@@ -113,7 +119,7 @@ export async function POST(req: NextRequest) {
     const result = await runAgentTask({
       taskId: task.id,
       maxSteps: stepCap,
-      timeoutMs: 20000,
+      timeoutMs: 45000,
     });
 
     const finalTask = await db.agentTask.findUnique({
