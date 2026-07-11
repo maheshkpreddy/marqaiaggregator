@@ -714,3 +714,54 @@ Stage Summary:
 - ✅ Curated templates (general, fullstack_dev, etc.) continue to work unchanged.
 - ✅ Vercel function timeout bumped to 300s so multi-step tasks have room to complete.
 - ✅ 10/10 parser unit tests pass.
+
+---
+Task ID: agent-chat-ui
+Agent: main (super-z)
+Task: Rebuild the Agent tab as a ZAI/Claude-style chat UI with multi-turn conversation continuity, and deploy to Vercel.
+
+Work Log:
+- Schema changes (prisma/schema.prisma + schema.postgres.prisma):
+  - Added agentType String? column to ChatSession — when non-null, the session is an agent chat driven by that persona.
+  - Added agentSteps Json? (postgres) / String? (sqlite) column to Message — stores the JSON-serialized ReAct step trace so the UI can render a "Show steps" expander under each assistant bubble.
+  - Added composite index on (orgId, agentType, updatedAt) for fast sidebar listing.
+  - Ran prisma db push locally — schema applied cleanly.
+- New library src/lib/agent-chat.ts:
+  - runAgentChatTurn() — runs one conversational turn of the agent. Loads the full conversation history from the DB, builds a system prompt with persona + format rules + prior user/assistant turns as context, runs the ReAct loop (up to 6 steps) using the same failover engine + tool whitelist enforcement as runAgentTask. Persists the user message + assistant response (with step trace attached) as Message rows.
+  - buildSystemPromptForChat() — variant of buildSystemPrompt that includes a "Prior conversation (for context)" section with all prior user/assistant turns, so the agent can answer follow-up questions.
+- Exported buildSystemPrompt + parseStepResponse + ParsedStep from src/lib/agent.ts so the chat engine can reuse the hardened parser + prompt builder.
+- New API routes:
+  - POST /api/agent/chat — accepts {message, agentType, sessionId?, primaryProviderId?, maxSteps?}. Creates a session on the first turn, reuses it on subsequent turns. Returns {sessionId, content, steps, ok, errorMessage, totalLatencyMs, totalTokensUsed, failedOverCount, finalProviderName, finalModel}. maxDuration=300s.
+  - GET /api/agent/sessions — lists agent chat sessions for the active org (only those with non-null agentType), newest first, with message count + last-message preview.
+  - GET /api/agent/sessions/[id] — loads one session with all messages (including parsed agentSteps JSON on each assistant message).
+  - DELETE /api/agent/sessions/[id] — deletes a session + its messages.
+- New UI component src/components/agent-panel.tsx (~600 lines):
+  - ZAI/Claude-style 2-column layout: conversation sidebar (left, 256px) + chat area (right, flex).
+  - Sidebar: "+ New agent chat" button, scrollable conversation list with persona icon + title + last-message preview + delete button on hover.
+  - Chat area header: persona icon + name + tagline + "Switch agent" button that toggles the persona picker (collapsible).
+  - Persona picker: search box + 13 category filter pills + scrollable 2-column grid of 147 agent cards. Clicking a card selects it and collapses the picker.
+  - Chat message area: user bubbles (right-aligned, emerald) + assistant bubbles (left-aligned, white/dark). Each assistant bubble shows provider, model, latency, and a "failed over" badge. A "Show N ReAct steps" expander under each assistant bubble reveals the full step trace.
+  - Input box at bottom with Enter-to-send / Shift+Enter-for-newline. Optimistic UI: user message appears instantly, assistant shows "Agent is reasoning…" spinner until response arrives.
+  - Empty state shows the selected persona's icon, description, and 4 one-click suggested goals.
+- Removed ~957 lines of old inline AgentPanel + AgentTaskDetail + AgentStepCard + toolIcons + taskStatusMeta + templateIconMap + TemplateIcon from src/app/page.tsx (replaced by the new component).
+- Updated src/app/page.tsx to import AgentPanel from @/components/agent-panel and pass just {providers} (no longer needs onProvidersChanged).
+- Verified: npx tsc --noEmit clean; VERCEL=1 npx next build succeeds with 37 routes (was 34, +3 new agent chat/sessions routes).
+- Committed as 3443e11 feat(agent): ZAI/Claude-style chat UI with multi-turn conversation continuity.
+- Pushed to GitHub main (1d0b30e..3443e11). Vercel auto-deploy triggered.
+- Production smoke tests (all passed):
+  - general Turn 1: "What is 12 * 8?" → "96" (1 step, 5s, failed over once, completed).
+  - general Turn 2 (continuity): "Add 10 to your previous answer" → response received, same sessionId.
+  - general Turn 3 (continuity): "What was the first number I asked about?" → "12" — proves the agent remembered Turn 1.
+  - All 6 messages persisted to the session with agentSteps JSON attached.
+  - code_review_pro (imported, 4.8KB persona) Turn 1: "What is 100 / 4?" → "25".
+  - code_review_pro Turn 2 (continuity): "Multiply that by 3." → "75" — correctly used prior turn's 25.
+  - Sessions list shows both conversations with correct agentType, message count, and title.
+
+Stage Summary:
+- ✅ Agent tab is now a ZAI/Claude-style chat UI — pick a persona, then chat multi-turn until satisfied.
+- ✅ Full conversation continuity: the agent sees all prior user + assistant messages on every turn, so it can answer follow-up questions, recall earlier numbers, and build on previous output.
+- ✅ Each assistant bubble has an expandable "Show N ReAct steps" trace (thought / action / actionInput / observation / provider / latency).
+- ✅ 147 agent personas (8 curated + 139 imported from the Skills Platform) all work in chat mode.
+- ✅ Conversations persist across page reloads — sidebar lists all prior agent chats with persona icon, title, and last-message preview.
+- ✅ Same failover engine as chat: if the primary provider fails mid-turn, the next takes over.
+- ✅ Live in production: https://marqaiaggregator.vercel.app — /api/agent/chat, /api/agent/sessions, /api/agent/sessions/[id] all working.
