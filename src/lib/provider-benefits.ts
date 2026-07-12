@@ -71,7 +71,30 @@ export interface ProviderBenefit {
   businessAdvantages: string[];
   /** Concrete API call shape: endpoint, auth header, body shape. */
   apiIntegrationDetails: string;
+  /**
+   * Capability modalities tags — what this AI can DO.
+   * Used by the AI Directory's "Capabilities" filter (chat, voice, video,
+   * image, vision, code, reasoning, agents, tools, embeddings).
+   */
+  modalities: Modality[];
 }
+
+/**
+ * Capability modality — what kind of input/output an AI can handle.
+ * Surfaced as a first-class filter in the AI Directory so users can browse
+ * "all AIs that can do voice", "all AIs that can generate images", etc.
+ */
+export type Modality =
+  | "chat"        // text-in / text-out conversation
+  | "voice"       // speech-to-text or text-to-speech
+  | "video"       // video understanding or generation
+  | "image"       // image generation / editing
+  | "vision"      // image understanding (multimodal input)
+  | "code"        // code generation / coding
+  | "reasoning"   // chain-of-thought / reasoning models
+  | "agents"      // agent orchestration / multi-step
+  | "tools"       // function calling / tool use
+  | "embeddings"; // embedding generation
 
 export const PROVIDER_BENEFITS: ProviderBenefit[] = [
   {
@@ -144,6 +167,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Fast time-to-production for any chat feature`,
   ],
     apiIntegrationDetails: `POST https://api.openai.com/v1/chat/completions with Authorization: Bearer <key>. Body: {model, messages, ...}. OpenAI-compatible — works with any OpenAI SDK.`,
+
+    modalities: ["chat", "code", "vision", "image", "voice", "agents", "tools", "reasoning", "embeddings"],
   },
   {
     name: `gemini`,
@@ -209,6 +234,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Strong for document-heavy verticals (legal, finance, healthcare)`,
   ],
     apiIntegrationDetails: `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key=<key>. Different request shape than OpenAI — Marq's callGemini adapter handles the translation.`,
+
+    modalities: ["chat", "code", "vision", "image", "video", "voice", "agents", "tools", "reasoning", "embeddings"],
   },
   {
     name: `claude`,
@@ -276,6 +303,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Reduces need for human review on writing tasks`,
   ],
     apiIntegrationDetails: `POST https://api.anthropic.com/v1/messages with headers x-api-key and anthropic-version: 2023-06-01. Body: {model, messages, max_tokens}. Marq's callClaude adapter handles the shape.`,
+
+    modalities: ["chat", "code", "vision", "agents", "tools", "reasoning"],
   },
   {
     name: `grok`,
@@ -338,6 +367,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Real-time awareness for news/journalism use cases`,
   ],
     apiIntegrationDetails: `POST https://api.x.ai/v1/chat/completions with Authorization: Bearer <key>. Body shape identical to OpenAI — drop-in compatible.`,
+
+    modalities: ["chat", "code", "reasoning", "tools", "vision"],
   },
   {
     name: `marq_glm`,
@@ -400,6 +431,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Single env var lights up two providers (Marq GLM + Zai)`,
   ],
     apiIntegrationDetails: `POST https://internal-api.z.ai/v1/chat/completions with headers Authorization: Bearer Z.ai, X-Token: <jwt>, X-Z-AI-From: Z. Marq's callZaiGlm adapter handles the custom auth.`,
+
+    modalities: ["chat", "code", "reasoning", "agents", "tools"],
   },
   {
     name: `zai`,
@@ -463,6 +496,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Single env var activates two providers`,
   ],
     apiIntegrationDetails: `Same as Marq GLM — POST https://internal-api.z.ai/v1/chat/completions with custom X-Token header.`,
+
+    modalities: ["chat", "code", "reasoning", "agents", "tools"],
   },
   {
     name: `marq_free`,
@@ -529,6 +564,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Ideal for demos, POCs, and dev environments`,
   ],
     apiIntegrationDetails: `POST https://text.pollinations.ai/openai with standard OpenAI body shape. No Authorization header needed. Anonymous tier is rate-limited but generous.`,
+
+    modalities: ["chat", "code", "reasoning"],
   },
   {
     name: `huggingface`,
@@ -594,6 +631,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Open-source licensing flexibility`,
   ],
     apiIntegrationDetails: `POST https://api-inference.huggingface.co/models/{model} with Authorization: Bearer <token>. Custom request shape — Marq treats it as OpenAI-compatible via the apiEndpoint override.`,
+
+    modalities: ["chat", "code", "vision", "image", "voice", "embeddings", "agents"],
   },
   {
     name: `ollama`,
@@ -664,6 +703,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Predictable cost = hardware amortization`,
   ],
     apiIntegrationDetails: `POST http://localhost:11434/v1/chat/completions (OpenAI-compatible). No auth header. Set OLLAMA_HOST env var to bind a different address.`,
+
+    modalities: ["chat", "code", "vision", "embeddings"],
   },
   {
     name: `replit`,
@@ -722,6 +763,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Quick prototyping flow`,
   ],
     apiIntegrationDetails: `POST https://model-proxy.replit.com/v1/chat/completions with Authorization: Bearer <key>. OpenAI-compatible.`,
+
+    modalities: ["code", "agents", "tools"],
   },
   {
     name: `modal`,
@@ -781,6 +824,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Scales to zero when idle`,
   ],
     apiIntegrationDetails: `Deploy your model with \'modal deploy\', then POST to the resulting URL. Modal supports OpenAI-compatible wrappers via \'modal serve\'.`,
+
+    modalities: ["code", "agents", "tools"],
   },
   {
     name: `gradio`,
@@ -841,6 +886,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Low commitment`,
   ],
     apiIntegrationDetails: `POST to the Space's /api/predict or /call endpoint. Shape varies by Space — Marq uses the OpenAI-compatible layer when the Space supports it.`,
+
+    modalities: ["chat", "vision", "image", "voice"],
   },
   {
     name: `mlflow`,
@@ -899,6 +946,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Smooth promotion from dev → staging → prod`,
   ],
     apiIntegrationDetails: `POST to your MLflow AI Gateway URL (default http://localhost:5000/v1/chat/completions). OpenAI-compatible. Configure routes in config.yaml.`,
+
+    modalities: ["agents", "tools"],
   },
   {
     name: `crewai`,
@@ -959,6 +1008,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Open-source = no vendor lock-in`,
   ],
     apiIntegrationDetails: `Expose your Crew as an OpenAI-compatible endpoint (FastAPI wrapper), then POST to that URL. Marq treats it like any OpenAI-compatible provider.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `langchain`,
@@ -1019,6 +1070,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Large talent pool (most popular LLM framework)`,
   ],
     apiIntegrationDetails: `Expose your chain via LangServe (FastAPI), then POST to the /chat/completions endpoint. Marq treats it as OpenAI-compatible.`,
+
+    modalities: ["agents", "tools", "code", "chat"],
   },
   {
     name: `qvac`,
@@ -1081,6 +1134,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Differentiated vs. single-model providers`,
   ],
     apiIntegrationDetails: `POST to your Qvac gateway URL with Authorization: Bearer <key>. OpenAI-compatible.`,
+
+    modalities: ["chat", "code", "agents"],
   },
   {
     name: `anaconda`,
@@ -1140,6 +1195,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Reduces 'works on my machine' incidents`,
   ],
     apiIntegrationDetails: `CLI tool (conda) — no HTTP API. For Anaconda Enterprise, REST API at https://repo.anaconda.com/api. Marq lists Anaconda as a platform reference; runtime chat requires wrapping a conda-managed model via Ollama/vLLM.`,
+
+    modalities: ["code", "agents"],
   },
   {
     name: `outerbounds`,
@@ -1198,6 +1255,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Reduced ML ops headcount needs`,
   ],
     apiIntegrationDetails: `Use the Metaflow SDK to define flows, then deploy via Outerbounds. Expose inference as an OpenAI-compatible endpoint; Marq treats the resulting URL as a custom provider.`,
+
+    modalities: ["agents", "tools"],
   },
   {
     name: `pytorch`,
@@ -1257,6 +1316,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active community + Meta backing`,
   ],
     apiIntegrationDetails: `Python library — no HTTP API. Wrap with TorchServe or FastAPI to expose an OpenAI-compatible endpoint. Marq lists PyTorch as a catalog reference; runtime chat requires serving it.`,
+
+    modalities: ["code", "vision", "image", "voice"],
   },
   {
     name: `tensorflow`,
@@ -1315,6 +1376,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Mature monitoring via TF Serving`,
   ],
     apiIntegrationDetails: `Python library — no HTTP API. Wrap with TF Serving (gRPC or REST) to expose an OpenAI-compatible endpoint. Marq lists TF as a catalog reference.`,
+
+    modalities: ["code", "vision", "image", "voice"],
   },
   {
     name: `keras`,
@@ -1373,6 +1436,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Educational resource for new hires`,
   ],
     apiIntegrationDetails: `Python library — no HTTP API. Export model and serve via the backend's serving stack (TF Serving, JAX export, TorchServe). Marq lists Keras as a catalog reference.`,
+
+    modalities: ["code", "vision", "image"],
   },
   {
     name: `opencv`,
@@ -1432,6 +1497,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Embedded/edge-ready`,
   ],
     apiIntegrationDetails: `C++/Python library — no HTTP API. For chat-style access, wrap OpenCV functions in a FastAPI server. Marq lists OpenCV as a catalog reference only.`,
+
+    modalities: ["vision", "image", "video"],
   },
   {
     name: `scikit_learn`,
@@ -1492,6 +1559,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Large talent pool`,
   ],
     apiIntegrationDetails: `Python library — no HTTP API. Wrap a trained sklearn model in FastAPI to expose an OpenAI-compatible endpoint. Marq lists sklearn as a catalog reference.`,
+
+    modalities: ["code", "tools"],
   },
   {
     name: `transformers`,
@@ -1553,6 +1622,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Fine-tuning for domain adaptation`,
   ],
     apiIntegrationDetails: `Python library — no HTTP API. Wrap with Text Generation Inference (TGI) or vLLM to expose an OpenAI-compatible endpoint. Marq lists Transformers as a catalog reference.`,
+
+    modalities: ["chat", "code", "vision", "image", "voice", "embeddings"],
   },
   {
     name: `instructor`,
@@ -1614,6 +1685,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Composable with any LLM provider`,
   ],
     apiIntegrationDetails: `Python library — wraps your existing LLM client. No HTTP API of its own. Marq lists Instructor as a catalog reference.`,
+
+    modalities: ["code", "tools", "chat"],
   },
   {
     name: `vllm`,
@@ -1681,6 +1754,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Scales with your GPU fleet`,
   ],
     apiIntegrationDetails: `POST http://your-host:8000/v1/chat/completions (OpenAI-compatible). Start with \'vllm serve <model>\'. Optional API key via --api-key flag.`,
+
+    modalities: ["chat", "code", "embeddings"],
   },
   {
     name: `autogen`,
@@ -1742,6 +1817,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Strong for code generation + verification`,
   ],
     apiIntegrationDetails: `Python framework — no HTTP API. Wrap your agent group in FastAPI to expose an OpenAI-compatible endpoint. Marq treats the resulting URL as a custom provider.`,
+
+    modalities: ["agents", "tools", "code", "chat"],
   },
   {
     name: `openclaw`,
@@ -1803,6 +1880,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Community-driven`,
   ],
     apiIntegrationDetails: `Self-host the OpenClaw server, then POST to its OpenAI-compatible endpoint. Configure agents + tools via YAML/Python.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `qwen`,
@@ -1868,6 +1947,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Code variant rivals frontier models`,
   ],
     apiIntegrationDetails: `POST https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions with Authorization: Bearer <key>. OpenAI-compatible. Or self-host via vLLM: \'vllm serve Qwen/Qwen2.5-7B-Instruct\'.`,
+
+    modalities: ["chat", "code", "vision", "image", "voice", "agents", "tools", "embeddings"],
   },
   {
     name: `mistral`,
@@ -1933,6 +2014,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Strong EU talent pool`,
   ],
     apiIntegrationDetails: `POST https://api.mistral.ai/v1/chat/completions with Authorization: Bearer <key>. OpenAI-compatible — drop-in replacement.`,
+
+    modalities: ["chat", "code", "vision", "agents", "tools", "embeddings"],
   },
   {
     name: `deepseek`,
@@ -1998,6 +2081,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Strong for high-volume workloads`,
   ],
     apiIntegrationDetails: `POST https://api.deepseek.com/v1/chat/completions with Authorization: Bearer <key>. OpenAI-compatible — drop-in replacement.`,
+
+    modalities: ["chat", "code", "reasoning", "agents", "tools"],
   },
   {
     name: `llama`,
@@ -2067,6 +2152,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `No vendor lock-in`,
   ],
     apiIntegrationDetails: `Not a hosted API. Serve via Ollama (localhost:11434), vLLM (localhost:8000), or TGI (localhost:8080) — all OpenAI-compatible. Or use hosted Llama via Together AI / Groq / Fireworks (set apiEndpoint accordingly).`,
+
+    modalities: ["chat", "code", "vision", "agents", "tools", "embeddings"],
   },
   // ─────────────────────────────────────────────────────────────
   // Infrabase.ai alternatives — local inference engines, agent
@@ -2141,6 +2228,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Easy to embed in edge devices and appliances`,
   ],
     apiIntegrationDetails: `GET http://localhost:8080/v1/models | POST http://localhost:8080/v1/chat/completions { model, messages } — OpenAI-compatible.`,
+
+    modalities: ["chat", "code", "embeddings"],
   },
   {
     name: `lmstudio`,
@@ -2208,6 +2297,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Works offline once models are downloaded`,
   ],
     apiIntegrationDetails: `POST http://localhost:1234/v1/chat/completions { model, messages } — drop-in OpenAI replacement. No auth header required by default.`,
+
+    modalities: ["chat", "code", "embeddings"],
   },
   {
     name: `jan`,
@@ -2274,6 +2365,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active community and roadmap`,
   ],
     apiIntegrationDetails: `POST http://localhost:1337/v1/chat/completions { model, messages } — OpenAI-compatible. API key configurable in Settings → API Keys.`,
+
+    modalities: ["chat", "code", "embeddings"],
   },
   {
     name: `gpt4all`,
@@ -2342,6 +2435,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Backed by Nomic AI — active development`,
   ],
     apiIntegrationDetails: `Desktop app exposes no HTTP server by default. Use the Python SDK: 'from gpt4all import GPT4All; model = GPT4All('model.gguf'); print(model.generate('prompt'))'.`,
+
+    modalities: ["chat", "code", "embeddings"],
   },
   {
     name: `localai`,
@@ -2410,6 +2505,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `MIT license — no vendor lock-in`,
   ],
     apiIntegrationDetails: `POST http://localhost:8080/v1/chat/completions { model, messages } with header 'Authorization: Bearer <token>' — OpenAI-compatible.`,
+
+    modalities: ["chat", "code", "vision", "image", "voice", "embeddings"],
   },
   {
     name: `dify`,
@@ -2477,6 +2574,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Cloud tier for teams that don't want to self-host`,
   ],
     apiIntegrationDetails: `POST https://api.dify.ai/v1/chat-messages { query, user, conversation_id } with header 'Authorization: Bearer app-<key>' — Dify's own API.`,
+
+    modalities: ["agents", "tools", "chat", "code"],
   },
   {
     name: `litellm`,
@@ -2544,6 +2643,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `MIT license + paid managed tier`,
   ],
     apiIntegrationDetails: `POST http://localhost:4000/v1/chat/completions { model, messages } with header 'Authorization: Bearer sk-<litellm-key>' — OpenAI-compatible.`,
+
+    modalities: ["chat", "code", "agents", "tools", "embeddings"],
   },
   {
     name: `llamaindex`,
@@ -2610,6 +2711,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active community + enterprise support`,
   ],
     apiIntegrationDetails: `Python SDK: 'from llama_index.core import VectorStoreIndex, SimpleDirectoryReader; index = VectorStoreIndex.from_documents(SimpleDirectoryReader('./data').load_data()); index.as_query_engine().query('question')'.`,
+
+    modalities: ["agents", "tools", "code", "chat", "embeddings"],
   },
   {
     name: `dspy`,
@@ -2676,6 +2779,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active Stanford research team`,
   ],
     apiIntegrationDetails: `Python SDK: 'import dspy; lm = dspy.LM('openai/gpt-4o'); dspy.configure(lm=lm); answer = dspy.Predict('question -> answer')(question='...')'.`,
+
+    modalities: ["code", "agents", "tools"],
   },
   {
     name: `langgraph`,
@@ -2743,6 +2848,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active LangChain ecosystem`,
   ],
     apiIntegrationDetails: `Python SDK: 'from langgraph.graph import StateGraph; graph = StateGraph(State); graph.add_node('step1', fn); graph.add_edge('step1', 'step2'); app = graph.compile(checkpointer=...); app.invoke(input)'.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `semantic-kernel`,
@@ -2810,6 +2917,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Open source (MIT) but with commercial support path`,
   ],
     apiIntegrationDetails: `.NET: 'var kernel = Kernel.Builder.WithAzureOpenAIChatCompletion(...).Build(); await kernel.InvokeAsync(function, args)'. Python: similar API.`,
+
+    modalities: ["agents", "tools", "code", "chat"],
   },
   {
     name: `vercel-ai-sdk`,
@@ -2876,6 +2985,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Apache-2.0 — free for commercial use`,
   ],
     apiIntegrationDetails: `TypeScript: 'import { streamText, openai } from 'ai'; const result = streamText({ model: openai('gpt-4o'), messages }); for await (const chunk of result.textStream) console.log(chunk);'.`,
+
+    modalities: ["chat", "code", "agents", "tools"],
   },
   {
     name: `mastra`,
@@ -2942,6 +3053,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active team and growing ecosystem`,
   ],
     apiIntegrationDetails: `TypeScript: 'import { Agent } from '@mastra/core'; const agent = new Agent({ name: 'researcher', instructions: '...', model, tools }); const result = await agent.generate('question');'.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `pydantic-ai`,
@@ -3010,6 +3123,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active Pydantic team — same maintainers as FastAPI`,
   ],
     apiIntegrationDetails: `Python: 'from pydantic_ai import Agent; agent = Agent('openai:gpt-4o', result_type=MyModel); result = await agent.run('question')'.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `spring-ai`,
@@ -3077,6 +3192,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `VMware / Spring team supported`,
   ],
     apiIntegrationDetails: `Java: '@Bean ChatClient chatClient(ChatClient.Builder b) { return b.build(); } chatClient.prompt('question').call().content()'.`,
+
+    modalities: ["agents", "tools", "code", "chat"],
   },
   {
     name: `haystack`,
@@ -3143,6 +3260,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Used in production by large enterprises`,
   ],
     apiIntegrationDetails: `Python: 'from haystack import Pipeline; pipe = Pipeline(); pipe.add_component('retriever', ...); pipe.run({'query': 'question'})'.`,
+
+    modalities: ["agents", "tools", "code", "chat"],
   },
   {
     name: `phidata`,
@@ -3211,6 +3330,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active development`,
   ],
     apiIntegrationDetails: `Python: 'from phi.agent import Agent; agent = Agent(model='gpt-4o'); agent.print_response('question', stream=True)'.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `google-adk`,
@@ -3276,6 +3397,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Backed by Google engineering`,
   ],
     apiIntegrationDetails: `Python: 'from google.adk import Agent; agent = Agent(model='gemini-2.0-flash', tools=[...]); result = agent.run('question')'.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `stagehand`,
@@ -3341,6 +3464,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Browserbase removes captcha / proxy headaches`,
   ],
     apiIntegrationDetails: `TypeScript: 'import { Stagehand } from '@browserbasehq/stagehand'; const sh = new Stagehand(); await sh.page.goto(url); await sh.page.act('click the submit button');'`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `tanstack-ai`,
@@ -3406,6 +3531,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active TanStack team`,
   ],
     apiIntegrationDetails: `TypeScript: 'import { useChat } from '@tanstack/react-ai'; const { messages, sendMessage } = useChat({ api: '/api/chat' });'`,
+
+    modalities: ["code", "agents", "tools"],
   },
   {
     name: `modular`,
@@ -3470,6 +3597,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Modular-backed with commercial support`,
   ],
     apiIntegrationDetails: `MAX inference server exposes an OpenAI-compatible API. 'POST http://localhost:8000/v1/chat/completions { model, messages }'.`,
+
+    modalities: ["code"],
   },
   {
     name: `burr`,
@@ -3535,6 +3664,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active DAGWorks team`,
   ],
     apiIntegrationDetails: `Python: 'from burr.core import ApplicationBuilder; app = ApplicationBuilder().with_actions(step1, step2).with_transitions(('step1','step2')).build(); app.run(halt_after=['step2'])'.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `ms-agent-framework`,
@@ -3599,6 +3730,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active Microsoft engineering`,
   ],
     apiIntegrationDetails: `.NET: 'var agent = new ChatCompletionAgent { Name='a', Instructions='...' }; await agent.InvokeAsync(thread);'`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `langroid`,
@@ -3666,6 +3799,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Active research-driven team`,
   ],
     apiIntegrationDetails: `Python: 'import langroid as lr; agent = lr.ChatAgent(lr.ChatAgentConfig()); result = agent.run('question')'.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `llmkit`,
@@ -3732,6 +3867,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `MIT license`,
   ],
     apiIntegrationDetails: `Go: 'client := llmkit.New('openai', apiKey); resp, _ := client.Chat(ctx, llmkit.ChatRequest{Messages: [...]})'. TS/Py/Rust: same shape.`,
+
+    modalities: ["agents", "tools", "code"],
   },
   {
     name: `cc-switch`,
@@ -3795,6 +3932,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Lightweight — desktop app only`,
   ],
     apiIntegrationDetails: `Local proxy on http://localhost:8787 (default). Point coding tools to this URL with any API key — CC Switch routes upstream.`,
+
+    modalities: ["chat", "code", "agents"],
   },
   {
     name: `llm-browser`,
@@ -3858,6 +3997,8 @@ export const PROVIDER_BENEFITS: ProviderBenefit[] = [
     `Faster agent development for web tasks`,
   ],
     apiIntegrationDetails: `POST https://api.llmbrowser.io/fetch { url } with 'Authorization: Bearer <key>' — returns '{ markdown, title, status }'.`,
+
+    modalities: ["agents", "tools"],
   },
 ];
 
@@ -3925,4 +4066,71 @@ export const POPULARITY_META: Record<ProviderBenefit["popularity"], { label: str
   "high": { label: "High", rank: 3 },
   "medium": { label: "Medium", rank: 2 },
   "low": { label: "Low", rank: 1 },
+};
+
+/**
+ * Modality metadata — drives the "Capabilities" filter in the AI Directory.
+ * `icon` is a Lucide icon name resolved via the panel's ICON_MAP.
+ */
+export const MODALITY_META: Record<Modality, { label: string; icon: string; color: string; description: string }> = {
+  chat: {
+    label: "Chat",
+    icon: "MessageSquare",
+    color: "#10b981",
+    description: "Text-in / text-out conversation, instruction following, summarization.",
+  },
+  voice: {
+    label: "Voice",
+    icon: "Mic",
+    color: "#f59e0b",
+    description: "Speech-to-text transcription or text-to-speech generation.",
+  },
+  video: {
+    label: "Video",
+    icon: "Video",
+    color: "#ec4899",
+    description: "Video understanding (multimodal input) or generation.",
+  },
+  image: {
+    label: "Image",
+    icon: "Image",
+    color: "#a855f7",
+    description: "Image generation, editing, or manipulation (text-to-image).",
+  },
+  vision: {
+    label: "Vision",
+    icon: "Eye",
+    color: "#06b6d4",
+    description: "Image understanding — describe, analyze, or answer questions about images.",
+  },
+  code: {
+    label: "Code",
+    icon: "Code2",
+    color: "#3b82f6",
+    description: "Code generation, completion, refactoring, or explanation.",
+  },
+  reasoning: {
+    label: "Reasoning",
+    icon: "Brain",
+    color: "#8b5cf6",
+    description: "Chain-of-thought / step-by-step reasoning models (o1, DeepSeek-R1, etc.).",
+  },
+  agents: {
+    label: "Agents",
+    icon: "Bot",
+    color: "#f97316",
+    description: "Agent orchestration — multi-step, tool-use, autonomous workflows.",
+  },
+  tools: {
+    label: "Tools",
+    icon: "Wrench",
+    color: "#14b8a6",
+    description: "Function calling / tool use — structured outputs, API integration.",
+  },
+  embeddings: {
+    label: "Embeddings",
+    icon: "Boxes",
+    color: "#6366f1",
+    description: "Vector embeddings for search, clustering, classification, RAG.",
+  },
 };

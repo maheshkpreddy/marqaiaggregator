@@ -884,3 +884,44 @@ Stage Summary:
 - The dashboard's hero, KPI tiles, quick-action cards, recent-conversations list, system status, failover feed, and top providers all act as shortcuts into the relevant module.
 - Mobile responsive: sidebar collapses into a slide-in drawer triggered by a hamburger in the mobile top bar.
 - Build green, types green, lint green — ready to commit + push to GitHub → Vercel auto-deploy.
+
+---
+Task ID: header-user-menu + ai-directory-modalities
+Agent: main (super-z)
+Task: (1) Move user profile + role name + logout from the sidebar footer into the top-right header corner. (2) Categorize AIs in the AI Directory by capability (voice, video, chat, image, agents, etc.). Deploy to Vercel.
+
+Work Log:
+- Read the current src/app/page.tsx layout — the user row (avatar + name + email + logout button) was sitting in `sidebarFooter` next to the org switcher.
+- Added `userMenuOpen` state alongside the existing `orgMenuOpen`.
+- Built a reusable `userMenu` JSX block that renders:
+  * A trigger button with the user's avatar (gradient emerald→cyan fallback), name (or email handle), a colored role dot (violet=owner, blue=admin, emerald=member, slate=viewer), the role label, and a chevron that flips when open.
+  * A dropdown panel with: gradient user header (avatar, name, email), role badge + plan badge, org context row, and action buttons (Team settings, Documentation, Sign out).
+  * Click-outside dismiss via a fixed overlay.
+- Removed the user row from `sidebarFooter` (kept the org switcher there) so the sidebar footer now only shows the org.
+- Injected `{userMenu}` into the desktop top bar's right side — after the health summary, v2.0 chip, and a divider — so the user's identity and the sign-out action live in the top-right corner.
+- Replaced the mobile top bar's plain avatar with the same `{userMenu}` block so the dropdown works identically on mobile.
+- Verified: npx tsc --noEmit → 0 errors.
+
+- Read src/lib/provider-benefits.ts — found the `ProviderBenefit` interface with `capabilities: string[]` (free-form) but no structured modality field.
+- Added a new `Modality` type to provider-benefits.ts: `chat | voice | video | image | vision | code | reasoning | agents | tools | embeddings`.
+- Added a `modalities: Modality[]` field to the `ProviderBenefit` interface.
+- Added a `MODALITY_META` export with label, icon name (Lucide), color, and description for each modality.
+- Wrote scripts/add-modalities.py — a Python script with a curated MODALITY_MAP for all 59 providers (OpenAI→chat/code/vision/image/voice/agents/tools/reasoning/embeddings, Gemini→adds video, Claude→chat/code/vision/agents/tools/reasoning, frameworks like CrewAI/LangChain/Dify→agents/tools/code, ML packages like PyTorch/OpenCV→vision/image/video, etc.). The script inserts `modalities: [...]` as the last field in each entry, right before the closing `},`. Idempotent — skips entries that already have the field.
+- Ran the script: 59/59 entries updated. Verified OpenAI, Gemini, Grok entries all have correct modality lists.
+- Updated src/components/ai-directory-panel.tsx:
+  * Imported MODALITY_META, Modality type, and added Mic, Video, Image (as ImageIcon), MessageSquare to the lucide imports + ICON_MAP.
+  * Added `activeModality` state ("all" by default) and `modalityCounts` useMemo that tallies how many AIs support each modality.
+  * Updated the filter logic to honor `activeModality` and added `modalities` to the search-text matching.
+  * Added a new "Capabilities" filter section between Popularity and the result count — renders one FilterChip per modality with its icon + label + count, plus an "All" chip and a "Clear" link when a modality is active. Each chip has a `title` tooltip showing the modality's description.
+  * Extended `FilterChip` to accept optional `icon` and `title` props.
+  * Added a modality badge row inside each `DirectoryCard` (right under the existing kind/popularity/category badges). Each badge shows the modality's icon + label and is color-tinted. The currently-active modality badge is highlighted (solid color background).
+  * Added `activeModality` to `DirectoryCardProps` so the active modality badge can render in solid color.
+- Verified: npx tsc --noEmit → 0 errors. npx eslint on changed files → 0 errors (1 pre-existing warning). VERCEL=1 npx next build → ✓ Compiled successfully in 15.9s, 29/29 static pages generated.
+
+Stage Summary:
+- User profile, role name, and logout are now in the top-right header corner (both desktop and mobile). The sidebar footer now only holds the org switcher.
+- The user dropdown shows avatar, name, email, role badge (with shield icon), plan badge, org context, and quick links to Team settings + Docs + Sign out.
+- The AI Directory now has a first-class "Capabilities" filter with 10 modalities: Chat, Voice, Video, Image, Vision, Code, Reasoning, Agents, Tools, Embeddings. Each chip shows an icon + label + count of matching AIs.
+- Every AI card now displays colored modality badges so users can see at a glance what each AI can do (e.g., OpenAI shows 9 badges, OpenCV shows Vision+Image+Video, CrewAI shows Agents+Tools+Code).
+- Filter combinations stack: selecting "Voice" + "Agents" + "very-high popularity" shows only AIs that match all three.
+- Build green, types green, lint green — ready to push to GitHub → Vercel auto-deploy.

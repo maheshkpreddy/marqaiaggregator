@@ -13,13 +13,17 @@ import {
   // New icons for infrabase.ai alternatives
   Code2, MonitorSmartphone, Coffee, Laptop, Workflow, Router, Braces, Triangle,
   ShieldCheck, Leaf, Zap, MousePointerClick, Globe, ToggleLeft,
+  // Modality icons
+  Mic, Video, Image as ImageIcon, MessageSquare,
   type LucideIcon,
 } from "lucide-react";
 import {
   PROVIDER_BENEFITS,
   KIND_META,
   POPULARITY_META,
+  MODALITY_META,
   type ProviderBenefit,
+  type Modality,
 } from "@/lib/provider-benefits";
 
 // Icon resolver — maps the string icon name in the data file to the actual Lucide component.
@@ -30,6 +34,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   // New icons for infrabase.ai alternatives
   Code2, MonitorSmartphone, Coffee, Laptop, Workflow, Router, Braces, Triangle,
   ShieldCheck, Leaf, Zap, MousePointerClick, Globe, ToggleLeft,
+  // Modality icons
+  Mic, Video, Image: ImageIcon, MessageSquare,
 };
 
 const POPULARITY_COLORS: Record<ProviderBenefit["popularity"], string> = {
@@ -65,6 +71,7 @@ export function AIDirectoryPanel({ onUsePrompt }: AIDirectoryPanelProps) {
   const [query, setQuery] = useState("");
   const [activeKind, setActiveKind] = useState<string>("all");
   const [activePopularity, setActivePopularity] = useState<string>("all");
+  const [activeModality, setActiveModality] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
 
@@ -75,13 +82,15 @@ export function AIDirectoryPanel({ onUsePrompt }: AIDirectoryPanelProps) {
       .filter((p) => {
         if (activeKind !== "all" && p.kind !== activeKind) return false;
         if (activePopularity !== "all" && p.popularity !== activePopularity) return false;
+        if (activeModality !== "all" && !p.modalities.includes(activeModality as Modality)) return false;
         if (!q) return true;
         return (
           p.displayName.toLowerCase().includes(q) ||
           p.tagline.toLowerCase().includes(q) ||
           p.bestFor.some((b) => b.toLowerCase().includes(q)) ||
           p.advantages.some((a) => a.toLowerCase().includes(q)) ||
-          p.availableModels.some((m) => m.toLowerCase().includes(q))
+          p.availableModels.some((m) => m.toLowerCase().includes(q)) ||
+          p.modalities.some((m) => m.toLowerCase().includes(q))
         );
       })
       .sort((a, b) => {
@@ -89,7 +98,7 @@ export function AIDirectoryPanel({ onUsePrompt }: AIDirectoryPanelProps) {
         if (popDiff !== 0) return popDiff;
         return a.displayName.localeCompare(b.displayName);
       });
-  }, [query, activeKind, activePopularity]);
+  }, [query, activeKind, activePopularity, activeModality]);
 
   const kindCounts = useMemo(() => {
     const counts: Record<string, number> = { all: PROVIDER_BENEFITS.length };
@@ -103,6 +112,17 @@ export function AIDirectoryPanel({ onUsePrompt }: AIDirectoryPanelProps) {
     const counts: Record<string, number> = { all: PROVIDER_BENEFITS.length };
     for (const p of PROVIDER_BENEFITS) {
       counts[p.popularity] = (counts[p.popularity] ?? 0) + 1;
+    }
+    return counts;
+  }, []);
+
+  // Modality counts — how many AIs support each capability.
+  const modalityCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: PROVIDER_BENEFITS.length };
+    for (const p of PROVIDER_BENEFITS) {
+      for (const m of p.modalities) {
+        counts[m] = (counts[m] ?? 0) + 1;
+      }
     }
     return counts;
   }, []);
@@ -188,6 +208,44 @@ export function AIDirectoryPanel({ onUsePrompt }: AIDirectoryPanelProps) {
         </div>
       </div>
 
+      {/* Capabilities / modalities filter — the headline filter for "what can this AI do" */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Capabilities</div>
+          {activeModality !== "all" && (
+            <button
+              onClick={() => setActiveModality("all")}
+              className="text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline-offset-2 hover:underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <FilterChip
+            label="All" count={modalityCounts.all}
+            active={activeModality === "all"}
+            onClick={() => setActiveModality("all")}
+          />
+          {(Object.keys(MODALITY_META) as Modality[]).map((m) => {
+            const meta = MODALITY_META[m];
+            const ModIcon = ICON_MAP[meta.icon] ?? Sparkles;
+            return (
+              <FilterChip
+                key={m}
+                label={meta.label}
+                count={modalityCounts[m] ?? 0}
+                active={activeModality === m}
+                onClick={() => setActiveModality(m)}
+                color={meta.color}
+                icon={<ModIcon className="w-3 h-3" />}
+                title={meta.description}
+              />
+            );
+          })}
+        </div>
+      </div>
+
       {/* Result count */}
       <div className="text-xs text-slate-500">
         Showing <span className="font-semibold text-slate-700 dark:text-slate-300">{filtered.length}</span> of {PROVIDER_BENEFITS.length} AIs
@@ -212,6 +270,7 @@ export function AIDirectoryPanel({ onUsePrompt }: AIDirectoryPanelProps) {
               onUsePrompt={onUsePrompt}
               onCopyPrompt={handleCopy}
               copiedPrompt={copiedPrompt}
+              activeModality={activeModality}
             />
           ))}
         </div>
@@ -224,19 +283,30 @@ export function AIDirectoryPanel({ onUsePrompt }: AIDirectoryPanelProps) {
 // Filter chip
 // ─────────────────────────────────────────────────────────────
 function FilterChip({
-  label, count, active, onClick, color,
-}: { label: string; count: number; active: boolean; onClick: () => void; color?: string }) {
+  label, count, active, onClick, color, icon, title,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+  color?: string;
+  icon?: React.ReactNode;
+  title?: string;
+}) {
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+      title={title}
+      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors inline-flex items-center gap-1.5 ${
         active
-          ? "text-white border-transparent"
+          ? "text-white border-transparent shadow-sm"
           : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
       }`}
       style={active ? { backgroundColor: color ?? "#6366f1" } : undefined}
     >
-      {label} <span className={active ? "text-white/70" : "text-slate-400"}>{count}</span>
+      {icon && <span className={active ? "text-white" : ""}>{icon}</span>}
+      {label}
+      <span className={active ? "text-white/70" : "text-slate-400"}>{count}</span>
     </button>
   );
 }
@@ -251,10 +321,11 @@ interface DirectoryCardProps {
   onUsePrompt?: (prompt: string) => void;
   onCopyPrompt: (text: string) => void;
   copiedPrompt: string | null;
+  activeModality: string;
 }
 
 function DirectoryCard({
-  benefit, expanded, onToggle, onUsePrompt, onCopyPrompt, copiedPrompt,
+  benefit, expanded, onToggle, onUsePrompt, onCopyPrompt, copiedPrompt, activeModality,
 }: DirectoryCardProps) {
   const Icon = ICON_MAP[benefit.icon] ?? Sparkles;
   const isCopied = (text: string) => copiedPrompt === text;
@@ -297,6 +368,33 @@ function DirectoryCard({
           <Badge variant="outline" className="text-[10px] capitalize">
             {benefit.category.replace("-", " ")}
           </Badge>
+        </div>
+
+        {/* Capability modality badges — what this AI can DO */}
+        <div className="flex flex-wrap gap-1 mt-2">
+          {benefit.modalities.map((m) => {
+            const meta = MODALITY_META[m];
+            const ModIcon = ICON_MAP[meta.icon] ?? Sparkles;
+            const isActiveMod = activeModality === m;
+            return (
+              <Badge
+                key={m}
+                variant="outline"
+                className={`text-[10px] font-medium gap-1 transition-colors ${
+                  isActiveMod
+                    ? "text-white border-transparent"
+                    : ""
+                }`}
+                style={isActiveMod
+                  ? { backgroundColor: meta.color, borderColor: meta.color }
+                  : { color: meta.color, borderColor: `${meta.color}30`, backgroundColor: `${meta.color}08` }}
+                title={meta.description}
+              >
+                <ModIcon className="w-2.5 h-2.5" />
+                {meta.label}
+              </Badge>
+            );
+          })}
         </div>
       </CardHeader>
 

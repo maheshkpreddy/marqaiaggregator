@@ -326,6 +326,7 @@ export default function Home() {
   const [authRole, setAuthRole] = useState<string | null>(null);
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   // ── App state ──
   const [tab, setTab] = useState<"dashboard" | "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "analytics" | "docs">("dashboard");
@@ -703,7 +704,7 @@ export default function Home() {
   );
 
   const sidebarFooter = (
-    <div className="border-t border-slate-200 dark:border-slate-800 p-2 space-y-1">
+    <div className="border-t border-slate-200 dark:border-slate-800 p-2">
       {/* Org switcher */}
       <div className="relative">
         <button
@@ -740,24 +741,104 @@ export default function Home() {
           </>
         )}
       </div>
+    </div>
+  );
 
-      {/* User row */}
-      <div className="flex items-center gap-2 px-2 py-1.5">
-        <Avatar className="w-7 h-7 shrink-0">
-          <AvatarFallback className="text-[10px] bg-slate-200 dark:bg-slate-800">
+  // User menu dropdown — rendered in the top-right of both desktop and mobile top bars.
+  const userMenu = (
+    <div className="relative">
+      <button
+        onClick={() => setUserMenuOpen((o) => !o)}
+        className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+        title="Account"
+      >
+        <Avatar className="w-7 h-7 shrink-0 ring-2 ring-white dark:ring-slate-900">
+          <AvatarFallback className="text-[10px] bg-gradient-to-br from-emerald-500 to-cyan-500 text-white font-semibold">
             {(authUser.name || authUser.email).slice(0, 2).toUpperCase()}
           </AvatarFallback>
         </Avatar>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">
-            {authUser.name || authUser.email}
+        <div className="hidden sm:block text-left min-w-0">
+          <div className="text-xs font-semibold text-slate-900 dark:text-white truncate max-w-32">
+            {authUser.name || authUser.email.split("@")[0]}
           </div>
-          <div className="text-[10px] text-slate-500 truncate">{authUser.email}</div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 capitalize flex items-center gap-1">
+            <span className={`inline-block w-1.5 h-1.5 rounded-full ${authRole === "owner" ? "bg-violet-500" : authRole === "admin" ? "bg-blue-500" : authRole === "member" ? "bg-emerald-500" : "bg-slate-400"}`} />
+            {authRole}
+          </div>
         </div>
-        <Button size="sm" variant="ghost" onClick={handleLogout} title="Sign out" className="h-7 w-7 p-0">
-          <LogOut className="w-3.5 h-3.5" />
-        </Button>
-      </div>
+        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${userMenuOpen ? "rotate-180" : ""}`} />
+      </button>
+      {userMenuOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
+          <div className="absolute right-0 mt-1 w-64 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl z-50 overflow-hidden">
+            {/* User header */}
+            <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-br from-slate-50 to-white dark:from-slate-800/50 dark:to-slate-900">
+              <div className="flex items-center gap-2.5">
+                <Avatar className="w-10 h-10 shrink-0">
+                  <AvatarFallback className="text-xs bg-gradient-to-br from-emerald-500 to-cyan-500 text-white font-semibold">
+                    {(authUser.name || authUser.email).slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                    {authUser.name || "User"}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {authUser.email}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 mt-2.5">
+                <Badge variant="outline" className="text-[10px] capitalize bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800">
+                  <Shield className="w-2.5 h-2.5 mr-1" />
+                  {authRole}
+                </Badge>
+                <Badge variant="outline" className="text-[10px] capitalize">
+                  {authOrg.plan} plan
+                </Badge>
+              </div>
+            </div>
+            {/* Org context */}
+            <div className="p-2 border-b border-slate-100 dark:border-slate-800">
+              <div className="px-2 py-1 flex items-center gap-2">
+                <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-500">Organization</div>
+                  <div className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{authOrg.name}</div>
+                </div>
+              </div>
+            </div>
+            {/* Actions */}
+            <div className="p-1.5">
+              {authRole !== "viewer" && (
+                <button
+                  onClick={() => { setTab("org"); setUserMenuOpen(false); }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-sm text-slate-700 dark:text-slate-300 text-left"
+                >
+                  <Users className="w-3.5 h-3.5 text-slate-400" />
+                  Team settings
+                </button>
+              )}
+              <button
+                onClick={() => { setTab("docs"); setUserMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-sm text-slate-700 dark:text-slate-300 text-left"
+              >
+                <FileText className="w-3.5 h-3.5 text-slate-400" />
+                Documentation
+              </button>
+              <div className="h-px bg-slate-100 dark:bg-slate-800 my-1" />
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-950/40 text-sm text-red-600 dark:text-red-400 text-left font-medium"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Sign out
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 
@@ -820,11 +901,7 @@ export default function Home() {
             </div>
             <span className="text-sm font-bold text-slate-900 dark:text-white">Marq <span className="text-emerald-600 dark:text-emerald-400">AI</span></span>
           </div>
-          <Avatar className="w-7 h-7">
-            <AvatarFallback className="text-[10px] bg-slate-200 dark:bg-slate-800">
-              {(authUser.name || authUser.email).slice(0, 2).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
+          {userMenu}
         </div>
 
         {/* Desktop top bar */}
@@ -836,33 +913,37 @@ export default function Home() {
             <span className="font-semibold text-slate-900 dark:text-white truncate">{currentMeta.label}</span>
           </div>
 
-          {/* Health summary */}
+          {/* Right side: health summary + user menu */}
           <div className="flex items-center gap-4 text-xs">
-            <div className="flex items-center gap-1.5">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              <span className="text-slate-600 dark:text-slate-300">{healthyCount} healthy</span>
+            <div className="hidden lg:flex items-center gap-4">
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span className="text-slate-600 dark:text-slate-300">{healthyCount} healthy</span>
+              </div>
+              {degradedCount > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  <span className="text-slate-600 dark:text-slate-300">{degradedCount} degraded</span>
+                </div>
+              )}
+              {downCount > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500" />
+                  <span className="text-slate-600 dark:text-slate-300">{downCount} down</span>
+                </div>
+              )}
             </div>
-            {degradedCount > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500" />
-                <span className="text-slate-600 dark:text-slate-300">{degradedCount} degraded</span>
-              </div>
-            )}
-            {downCount > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500" />
-                <span className="text-slate-600 dark:text-slate-300">{downCount} down</span>
-              </div>
-            )}
             <a
               href="https://github.com/maheshkpreddy/marqaiaggregator"
               target="_blank"
               rel="noopener noreferrer"
-              className="ml-2 px-2 py-1 rounded-md border border-slate-200 dark:border-slate-800 text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="hidden md:inline-flex px-2 py-1 rounded-md border border-slate-200 dark:border-slate-800 text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               title="View source on GitHub"
             >
               v2.0
             </a>
+            <div className="h-6 w-px bg-slate-200 dark:bg-slate-800 hidden md:block" />
+            {userMenu}
           </div>
         </header>
 
