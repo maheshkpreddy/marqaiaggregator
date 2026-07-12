@@ -15,6 +15,8 @@ import {
   ShieldCheck, Leaf, Zap, MousePointerClick, Globe, ToggleLeft,
   // Modality icons
   Mic, Video, Image as ImageIcon, MessageSquare,
+  // Infrabase catalog icons — audio / music / observability / cloud / chart / graph
+  Music, AudioWaveform, Activity, Cloud, Gauge, BarChart3, Radio, Volume2,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -36,6 +38,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   ShieldCheck, Leaf, Zap, MousePointerClick, Globe, ToggleLeft,
   // Modality icons
   Mic, Video, Image: ImageIcon, MessageSquare,
+  // Infrabase catalog icons
+  Music, AudioWaveform, Activity, Cloud, Gauge, BarChart3, Radio, Volume2,
 };
 
 const POPULARITY_COLORS: Record<ProviderBenefit["popularity"], string> = {
