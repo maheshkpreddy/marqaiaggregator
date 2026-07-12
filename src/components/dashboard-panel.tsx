@@ -10,7 +10,7 @@ import {
   Users, Key, BookOpen, Network, BarChart3, ArrowRight, Zap,
   CheckCircle2, AlertTriangle, XCircle, Clock, TrendingUp, Cpu,
   Layers, Workflow, Server, Globe, Lock, ChevronRight, Plus,
-  FileText, BookMarked,
+  FileText, BookMarked, ServerCog,
 } from "lucide-react";
 
 // ---------- Types ----------
@@ -53,7 +53,7 @@ interface DashboardPanelProps {
   failovers: FailoverLog[];
   sessions: Session[];
   onNavigate: (
-    tab: "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "analytics" | "docs",
+    tab: "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "unified-ai" | "analytics" | "docs",
   ) => void;
   onNewChat: () => void;
 }
@@ -153,6 +153,10 @@ export function DashboardPanel({
                 <Badge variant="outline" className="bg-slate-50 dark:bg-slate-800/50">
                   {org.plan} plan
                 </Badge>
+                <Badge variant="outline" className="bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800">
+                  <ServerCog className="w-3 h-3 mr-1" />
+                  130 AIs integrated
+                </Badge>
                 <span className="text-xs text-slate-500 dark:text-slate-400 hidden sm:inline">
                   {org.name}
                 </span>
@@ -181,6 +185,10 @@ export function DashboardPanel({
                 <Button variant="outline" onClick={() => onNavigate("directory")}>
                   <Network className="w-4 h-4 mr-1.5" />
                   Browse AI directory
+                </Button>
+                <Button variant="outline" onClick={() => onNavigate("unified-ai")}>
+                  <ServerCog className="w-4 h-4 mr-1.5" />
+                  Unified AI health
                 </Button>
               </div>
             </div>

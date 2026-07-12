@@ -74,6 +74,7 @@ import {
   LayoutDashboard,
   Menu,
   X,
+  ServerCog,
 } from "lucide-react";
 import { AuthScreen } from "@/components/auth-screen";
 import { OrganizationPanel } from "@/components/org-panel";
@@ -83,6 +84,7 @@ import { PromptsPanel } from "@/components/prompts-panel";
 import { ProviderGuidePanel } from "@/components/provider-guide-panel";
 import { AgentPanel } from "@/components/agent-panel";
 import { AIDirectoryPanel } from "@/components/ai-directory-panel";
+import { UnifiedAiPanel } from "@/components/unified-ai-panel";
 import { AIAnalyticsDashboard } from "@/components/ai-analytics-dashboard";
 import { DocumentationPanel } from "@/components/documentation-panel";
 import { DashboardPanel, type Role as DashboardRole } from "@/components/dashboard-panel";
@@ -329,7 +331,7 @@ export default function Home() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"dashboard" | "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "analytics" | "docs">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "unified-ai" | "analytics" | "docs">("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -655,6 +657,7 @@ export default function Home() {
     agent: { group: "Build", label: "Agents" },
     prompts: { group: "Build", label: "Prompts" },
     directory: { group: "Discover", label: "AI Directory" },
+    "unified-ai": { group: "Discover", label: "Unified AI" },
     guide: { group: "Discover", label: "Guide" },
     providers: { group: "Settings", label: "AI Providers" },
     health: { group: "Settings", label: "Health" },
@@ -681,6 +684,7 @@ export default function Home() {
 
       <NavGroup label="Discover">
         <NavItem icon={Network} label="AI Directory" active={tab === "directory"} onClick={() => { setTab("directory"); setMobileNavOpen(false); }} />
+        <NavItem icon={ServerCog} label="Unified AI" active={tab === "unified-ai"} onClick={() => { setTab("unified-ai"); setMobileNavOpen(false); }} />
         <NavItem icon={BookOpen} label="Guide" active={tab === "guide"} onClick={() => { setTab("guide"); setMobileNavOpen(false); }} />
       </NavGroup>
 
@@ -1111,6 +1115,13 @@ export default function Home() {
           {/* AI DIRECTORY TAB — catalog of every integrated AI */}
           <TabsContent value="directory" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
             <AIDirectoryPanel
+              onUsePrompt={(prompt) => { setInput(prompt); setTab("chat"); }}
+            />
+          </TabsContent>
+
+          {/* UNIFIED AI TAB — health + capabilities for all 130 integrated AIs */}
+          <TabsContent value="unified-ai" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <UnifiedAiPanel
               onUsePrompt={(prompt) => { setInput(prompt); setTab("chat"); }}
             />
           </TabsContent>
