@@ -845,3 +845,42 @@ Stage Summary:
 - ✅ UI decongested: 2-row header (brand+auth on top, tab bar on bottom), tabs grouped into Build/Discover/Admin/Org clusters with subtle dividers, wider chat container (max-w-4xl), more message spacing (space-y-8), wider prompts grid (3 columns), wider provider guide (max-w-7xl).
 - ✅ Open-source-first auto-mode policy extended to cover all 13 new open-source providers — they're tried before chargeable APIs in the failover chain.
 - ✅ Live in production: https://marqaiaggregator.vercel.app — all 32 providers seeded, 26 prompts seeded, /api/ai-dashboard returning full payload, chat still resolves on first attempt via marq_free.
+
+---
+Task ID: modern-ui-role-dashboard
+Agent: main (super-z)
+Task: Replace the old two-row tab-bar UI with a modern sidebar + topbar layout, and add a role-based Dashboard that opens immediately after login. Deploy to Vercel.
+
+Work Log:
+- Read current src/app/page.tsx (1849 lines) and src/components/auth-screen.tsx to understand the existing two-row header + tab-bar pattern.
+- Read src/lib/auth.ts to confirm the existing RBAC ladder (owner > admin > member > viewer) and the AuthContext shape returned by /api/auth/me.
+- Created src/components/dashboard-panel.tsx — a new role-aware DashboardPanel component with:
+  - Hero card: gradient backdrop, role badge, plan badge, greeting + first name, role-tuned copy, and a mini live-topology infographic (client → Marq core → top 3 providers with animated SVG connectors and a 3-column health summary).
+  - 4 KPI tiles (active providers, healthy, recent failovers, conversations) — each clickable to navigate to the relevant module.
+  - Two-column body: left = "Get to work" quick-action grid (Chat, Agents, Compare, Prompts) + manager-only Admin row (Team, API Keys, Analytics) + recent conversations list; right = System Status card + Recent Failovers feed + Top Providers list + dark gradient "Open docs" callout.
+  - Role-awareness: viewers get read-only copy + no "New chat" CTA; members get productivity-focused copy; managers get the Admin section.
+- Refactored src/app/page.tsx:
+  - Added "dashboard" to the tab union type and switched the default from "chat" to "dashboard" so the dashboard opens immediately after login.
+  - Updated handleLogout() and handleSwitchOrg() to reset to "dashboard" instead of "chat".
+  - Added mobileNavOpen state for the mobile drawer.
+  - Added TAB_META breadcrumb map (group + label) for the topbar.
+  - Added sidebarNav + sidebarFooter JSX consts (rendered both in the desktop sidebar and the mobile drawer).
+  - Replaced the entire header + tab-bar block with a modern layout:
+    * Desktop: 240px fixed sidebar (brand, grouped nav, org switcher, user row) + slim 56px topbar (breadcrumb + live health summary + v2.0 chip).
+    * Mobile: 48px top bar with hamburger + brand + avatar; full-height drawer with the same nav + footer.
+  - Added a new <TabsContent value="dashboard"> that renders <DashboardPanel> with onNavigate={setTab} and onNewChat (creates a session then switches to chat).
+  - Role-based menu visibility: viewer hides Team + API Keys; member hides API Keys; admin/owner see all.
+  - Adjusted chat tab height from h-[calc(100vh-7rem)] to h-[calc(100vh-3.5rem)] to match the new single topbar.
+  - Added NavItem + NavGroup helper components at the bottom of the file (active state uses emerald→cyan gradient + border + shadow; inactive uses subtle hover bg).
+  - Added LayoutDashboard, Menu, X to lucide-react imports; removed unused Home import that conflicted with the local Home component name.
+- Added DashboardPanel + Role type import.
+- Verified: npx tsc --noEmit → 0 errors. npx eslint on changed files → 0 errors (1 pre-existing warning). VERCEL=1 npx next build → ✓ Compiled successfully in 15.4s, 29/29 static pages generated, all 33 API routes intact.
+
+Stage Summary:
+- The app now opens to a role-based Dashboard immediately after login (no more landing on the Chat tab).
+- The old two-row tab bar is replaced by a modern sidebar + slim topbar — same Linear/Vercel/Notion pattern users expect from a 2025 SaaS product.
+- Navigation is grouped by functionality: Overview (Dashboard), Build (Chat, Agents, Compare, Prompts), Discover (AI Directory, Guide), Settings (AI Providers, Health, Failovers, Analytics, Team, API Keys), Help (Docs).
+- Menu items are role-filtered: viewers don't see Team/API Keys; members don't see API Keys; only admins/owners see everything.
+- The dashboard's hero, KPI tiles, quick-action cards, recent-conversations list, system status, failover feed, and top providers all act as shortcuts into the relevant module.
+- Mobile responsive: sidebar collapses into a slide-in drawer triggered by a hamburger in the mobile top bar.
+- Build green, types green, lint green — ready to commit + push to GitHub → Vercel auto-deploy.

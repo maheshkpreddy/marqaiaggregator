@@ -71,6 +71,9 @@ import {
   BookOpen,
   Network,
   BarChart3,
+  LayoutDashboard,
+  Menu,
+  X,
 } from "lucide-react";
 import { AuthScreen } from "@/components/auth-screen";
 import { OrganizationPanel } from "@/components/org-panel";
@@ -82,6 +85,7 @@ import { AgentPanel } from "@/components/agent-panel";
 import { AIDirectoryPanel } from "@/components/ai-directory-panel";
 import { AIAnalyticsDashboard } from "@/components/ai-analytics-dashboard";
 import { DocumentationPanel } from "@/components/documentation-panel";
+import { DashboardPanel, type Role as DashboardRole } from "@/components/dashboard-panel";
 
 // ---------- Auth types ----------
 interface AuthUser {
@@ -324,7 +328,8 @@ export default function Home() {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "analytics" | "docs">("chat");
+  const [tab, setTab] = useState<"dashboard" | "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "analytics" | "docs">("dashboard");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -422,7 +427,7 @@ export default function Home() {
     setSessions([]);
     setMessages([]);
     setActiveSessionId(null);
-    setTab("chat");
+    setTab("dashboard");
   }
 
   async function handleSwitchOrg(orgId: string) {
@@ -442,7 +447,7 @@ export default function Home() {
       setSessions([]);
       setMessages([]);
       setActiveSessionId(null);
-      setTab("chat");
+      setTab("dashboard");
       setTimeout(() => {
         loadSessions();
         loadFailovers();
@@ -641,173 +646,246 @@ export default function Home() {
     return <AuthScreen onSuccess={handleAuthSuccess} />;
   }
 
-  return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
-      {/* Header — two rows: brand + auth on top, tab bar on bottom (decongested) */}
-      <header className="sticky top-0 z-40 border-b border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl">
-        {/* Row 1: brand + health summary + org/user menu */}
-        <div className="px-4 md:px-8 h-14 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 shrink-0">
-              <Layers className="w-5 h-5 text-white" strokeWidth={2.5} />
+  // Current tab metadata for the topbar breadcrumb.
+  const TAB_META: Record<typeof tab, { group: string; label: string }> = {
+    dashboard: { group: "Overview", label: "Dashboard" },
+    chat: { group: "Build", label: "Chat" },
+    compare: { group: "Build", label: "Compare" },
+    agent: { group: "Build", label: "Agents" },
+    prompts: { group: "Build", label: "Prompts" },
+    directory: { group: "Discover", label: "AI Directory" },
+    guide: { group: "Discover", label: "Guide" },
+    providers: { group: "Settings", label: "AI Providers" },
+    health: { group: "Settings", label: "Health" },
+    failovers: { group: "Settings", label: "Failovers" },
+    analytics: { group: "Settings", label: "Analytics" },
+    org: { group: "Settings", label: "Team" },
+    apikeys: { group: "Settings", label: "API Keys" },
+    docs: { group: "Help", label: "Docs" },
+  };
+  const currentMeta = TAB_META[tab];
+  const isManager = authRole === "owner" || authRole === "admin";
+
+  // Sidebar content — rendered both in the desktop sidebar and the mobile drawer.
+  const sidebarNav = (
+    <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
+      <NavItem icon={LayoutDashboard} label="Dashboard" active={tab === "dashboard"} onClick={() => { setTab("dashboard"); setMobileNavOpen(false); }} />
+
+      <NavGroup label="Build">
+        <NavItem icon={MessageSquare} label="Chat" active={tab === "chat"} onClick={() => { setTab("chat"); setMobileNavOpen(false); }} />
+        <NavItem icon={Brain} label="Agents" active={tab === "agent"} onClick={() => { setTab("agent"); setMobileNavOpen(false); }} />
+        <NavItem icon={GitCompare} label="Compare" active={tab === "compare"} onClick={() => { setTab("compare"); setMobileNavOpen(false); }} />
+        <NavItem icon={BookMarked} label="Prompts" active={tab === "prompts"} onClick={() => { setTab("prompts"); setMobileNavOpen(false); }} />
+      </NavGroup>
+
+      <NavGroup label="Discover">
+        <NavItem icon={Network} label="AI Directory" active={tab === "directory"} onClick={() => { setTab("directory"); setMobileNavOpen(false); }} />
+        <NavItem icon={BookOpen} label="Guide" active={tab === "guide"} onClick={() => { setTab("guide"); setMobileNavOpen(false); }} />
+      </NavGroup>
+
+      <NavGroup label="Settings">
+        <NavItem icon={Settings2} label="AI Providers" active={tab === "providers"} onClick={() => { setTab("providers"); setMobileNavOpen(false); }} />
+        <NavItem icon={Activity} label="Health" active={tab === "health"} onClick={() => { setTab("health"); setMobileNavOpen(false); }} />
+        <NavItem icon={Shield} label="Failovers" active={tab === "failovers"} onClick={() => { setTab("failovers"); setMobileNavOpen(false); }} />
+        <NavItem icon={BarChart3} label="Analytics" active={tab === "analytics"} onClick={() => { setTab("analytics"); setMobileNavOpen(false); }} />
+        {authRole !== "viewer" && (
+          <NavItem icon={Users} label="Team" active={tab === "org"} onClick={() => { setTab("org"); setMobileNavOpen(false); }} />
+        )}
+        {isManager && (
+          <NavItem icon={Key} label="API Keys" active={tab === "apikeys"} onClick={() => { setTab("apikeys"); setMobileNavOpen(false); }} />
+        )}
+      </NavGroup>
+
+      <NavGroup label="Help">
+        <NavItem icon={FileText} label="Docs" active={tab === "docs"} onClick={() => { setTab("docs"); setMobileNavOpen(false); }} />
+      </NavGroup>
+    </nav>
+  );
+
+  const sidebarFooter = (
+    <div className="border-t border-slate-200 dark:border-slate-800 p-2 space-y-1">
+      {/* Org switcher */}
+      <div className="relative">
+        <button
+          onClick={() => setOrgMenuOpen((o) => !o)}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-left"
+        >
+          <div className="w-7 h-7 rounded-md bg-gradient-to-br from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center shrink-0">
+            <Building2 className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{authOrg.name}</div>
+            <div className="text-[10px] text-slate-500 capitalize">{authRole} · {authOrg.plan}</div>
+          </div>
+          <ChevronDown className="w-3 h-3 text-slate-400" />
+        </button>
+        {orgMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setOrgMenuOpen(false)} />
+            <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-lg z-50 overflow-hidden">
+              <div className="p-2 text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                Your organizations
+              </div>
+              {memberships.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => handleSwitchOrg(m.org.id)}
+                  className={`w-full flex items-center justify-between px-2 py-1.5 text-xs text-left hover:bg-slate-100 dark:hover:bg-slate-800 ${m.org.id === authOrg.id ? "bg-slate-50 dark:bg-slate-800/50" : ""}`}
+                >
+                  <span className="truncate">{m.org.name}</span>
+                  <Badge variant="outline" className="text-[10px] capitalize ml-2 shrink-0">{m.role}</Badge>
+                </button>
+              ))}
             </div>
-            <div className="min-w-0">
-              <div className="font-bold text-base md:text-lg leading-tight tracking-tight truncate">
-                Marq <span className="text-emerald-600 dark:text-emerald-400">AI</span>
-              </div>
-              <div className="text-[10px] md:text-xs text-slate-500 dark:text-slate-400 -mt-0.5 hidden sm:block">
-                Unified AI Aggregator
-              </div>
+          </>
+        )}
+      </div>
+
+      {/* User row */}
+      <div className="flex items-center gap-2 px-2 py-1.5">
+        <Avatar className="w-7 h-7 shrink-0">
+          <AvatarFallback className="text-[10px] bg-slate-200 dark:bg-slate-800">
+            {(authUser.name || authUser.email).slice(0, 2).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">
+            {authUser.name || authUser.email}
+          </div>
+          <div className="text-[10px] text-slate-500 truncate">{authUser.email}</div>
+        </div>
+        <Button size="sm" variant="ghost" onClick={handleLogout} title="Sign out" className="h-7 w-7 p-0">
+          <LogOut className="w-3.5 h-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen flex bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+      {/* ─── Desktop sidebar ─── */}
+      <aside className="hidden md:flex w-60 flex-col border-r border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl shrink-0">
+        {/* Brand */}
+        <div className="h-14 px-4 flex items-center gap-2 border-b border-slate-200 dark:border-slate-800">
+          <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center shadow-md shadow-emerald-500/20 shrink-0">
+            <Layers className="w-4 h-4 text-white" strokeWidth={2.5} />
+            <div className="absolute -inset-0.5 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500 opacity-30 blur-sm -z-10" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-bold text-sm leading-tight tracking-tight truncate text-slate-900 dark:text-white">
+              Marq <span className="text-emerald-600 dark:text-emerald-400">AI</span>
+            </div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 -mt-0.5 truncate">
+              Unified Aggregator
             </div>
           </div>
+        </div>
 
-          {/* Center: live health summary (hidden on small screens) */}
-          <div className="hidden lg:flex items-center gap-4 text-xs">
+        {sidebarNav}
+        {sidebarFooter}
+      </aside>
+
+      {/* ─── Mobile drawer ─── */}
+      {mobileNavOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setMobileNavOpen(false)} />
+          <div className="relative w-64 max-w-[80vw] bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col">
+            <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-md bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center">
+                  <Layers className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
+                </div>
+                <span className="text-sm font-bold text-slate-900 dark:text-white">Marq AI</span>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setMobileNavOpen(false)} className="h-7 w-7 p-0">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            {sidebarNav}
+            {sidebarFooter}
+          </div>
+        </div>
+      )}
+
+      {/* ─── Main column ─── */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Mobile top bar */}
+        <div className="md:hidden fixed top-0 left-0 right-0 z-40 h-12 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 backdrop-blur-xl flex items-center justify-between px-3">
+          <button onClick={() => setMobileNavOpen(true)} className="p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Open menu">
+            <Menu className="w-4 h-4 text-slate-700 dark:text-slate-300" />
+          </button>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center">
+              <Layers className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
+            </div>
+            <span className="text-sm font-bold text-slate-900 dark:text-white">Marq <span className="text-emerald-600 dark:text-emerald-400">AI</span></span>
+          </div>
+          <Avatar className="w-7 h-7">
+            <AvatarFallback className="text-[10px] bg-slate-200 dark:bg-slate-800">
+              {(authUser.name || authUser.email).slice(0, 2).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+        </div>
+
+        {/* Desktop top bar */}
+        <header className="hidden md:flex h-14 border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-950/70 backdrop-blur-xl items-center justify-between px-6 shrink-0">
+          {/* Breadcrumb */}
+          <div className="flex items-center gap-2 text-sm min-w-0">
+            <span className="text-slate-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider">{currentMeta.group}</span>
+            <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-slate-700 shrink-0" />
+            <span className="font-semibold text-slate-900 dark:text-white truncate">{currentMeta.label}</span>
+          </div>
+
+          {/* Health summary */}
+          <div className="flex items-center gap-4 text-xs">
             <div className="flex items-center gap-1.5">
-              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
               <span className="text-slate-600 dark:text-slate-300">{healthyCount} healthy</span>
             </div>
             {degradedCount > 0 && (
               <div className="flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500" />
                 <span className="text-slate-600 dark:text-slate-300">{degradedCount} degraded</span>
               </div>
             )}
             {downCount > 0 && (
               <div className="flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500" />
                 <span className="text-slate-600 dark:text-slate-300">{downCount} down</span>
               </div>
             )}
+            <a
+              href="https://github.com/maheshkpreddy/marqaiaggregator"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-2 px-2 py-1 rounded-md border border-slate-200 dark:border-slate-800 text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              title="View source on GitHub"
+            >
+              v2.0
+            </a>
           </div>
+        </header>
 
-          {/* Right: org switcher + user menu */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="relative">
-              <button
-                onClick={() => setOrgMenuOpen((o) => !o)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
-              >
-                <Building2 className="w-3.5 h-3.5 text-slate-500" />
-                <span className="hidden md:inline max-w-32 truncate">{authOrg.name}</span>
-                <Badge variant="outline" className="text-xs capitalize hidden lg:inline">{authRole}</Badge>
-                <ChevronDown className="w-3 h-3 text-slate-400" />
-              </button>
-              {orgMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setOrgMenuOpen(false)} />
-                  <div className="absolute right-0 mt-1 w-64 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-lg z-50">
-                    <div className="p-2 text-xs uppercase text-slate-500 border-b border-slate-200 dark:border-slate-800">
-                      Your organizations
-                    </div>
-                    {memberships.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => handleSwitchOrg(m.org.id)}
-                        className={`w-full flex items-center justify-between px-3 py-2 text-sm text-left hover:bg-slate-100 dark:hover:bg-slate-800 ${m.org.id === authOrg.id ? "bg-slate-50 dark:bg-slate-800/50" : ""}`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                          <span className="truncate">{m.org.name}</span>
-                        </span>
-                        <Badge variant="outline" className="text-xs capitalize">{m.role}</Badge>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
-              <Avatar className="w-7 h-7">
-                <AvatarFallback className="text-xs">
-                  {(authUser.name || authUser.email).slice(0, 2).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <Button size="sm" variant="ghost" onClick={handleLogout} title="Sign out">
-                <LogOut className="w-3.5 h-3.5" />
-              </Button>
-            </div>
-          </div>
-        </div>
+        {/* Main content */}
+        <main className="flex-1 flex overflow-hidden pt-12 md:pt-0">
+          <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="flex-1 flex flex-col">
+            {/* DASHBOARD TAB — role-aware landing page shown immediately after login */}
+            <TabsContent value="dashboard" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+              <DashboardPanel
+                user={authUser}
+                org={authOrg}
+                role={authRole as DashboardRole}
+                providers={providers}
+                failovers={failovers}
+                sessions={sessions}
+                onNavigate={(t) => setTab(t)}
+                onNewChat={async () => { await newSession(); setTab("chat"); }}
+              />
+            </TabsContent>
 
-        {/* Row 2: tab bar — grouped into functional categories (Build / Discover / Settings / Docs) */}
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-          <div className="px-4 md:px-8 pb-2 overflow-x-auto">
-            <TabsList className="bg-slate-100 dark:bg-slate-900 h-9 flex-wrap sm:flex-nowrap">
-              {/* ── Build ── */}
-              <span className="hidden md:flex items-center px-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none">Build</span>
-              <TabsTrigger value="chat" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Chat</span>
-              </TabsTrigger>
-              <TabsTrigger value="compare" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <GitCompare className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Compare</span>
-              </TabsTrigger>
-              <TabsTrigger value="agent" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Brain className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Agent</span>
-              </TabsTrigger>
-              <TabsTrigger value="prompts" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <BookMarked className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Prompts</span>
-              </TabsTrigger>
-
-              {/* ── Discover ── */}
-              <span className="hidden md:flex items-center px-2 ml-1 border-l border-slate-200/70 dark:border-slate-800/70 text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none">Discover</span>
-              <TabsTrigger value="directory" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Network className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">AI Directory</span>
-              </TabsTrigger>
-              <TabsTrigger value="guide" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <BookOpen className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Guide</span>
-              </TabsTrigger>
-
-              {/* ── Settings ── */}
-              <span className="hidden md:flex items-center px-2 ml-1 border-l border-slate-200/70 dark:border-slate-800/70 text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none">Settings</span>
-              <TabsTrigger value="providers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Settings2 className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">AI</span>
-              </TabsTrigger>
-              <TabsTrigger value="health" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Activity className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Health</span>
-              </TabsTrigger>
-              <TabsTrigger value="failovers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Shield className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Failovers</span>
-              </TabsTrigger>
-              <TabsTrigger value="analytics" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <BarChart3 className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Analytics</span>
-              </TabsTrigger>
-              <TabsTrigger value="org" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Users className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Team</span>
-              </TabsTrigger>
-              <TabsTrigger value="apikeys" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Key className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">API Keys</span>
-              </TabsTrigger>
-
-              {/* ── Docs ── */}
-              <span className="hidden md:flex items-center px-2 ml-1 border-l border-slate-200/70 dark:border-slate-800/70 text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none">Help</span>
-              <TabsTrigger value="docs" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <FileText className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Docs</span>
-              </TabsTrigger>
-            </TabsList>
-          </div>
-        </Tabs>
-      </header>
-
-      {/* Main Content */}
-      <main className="flex-1 flex overflow-hidden">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="flex-1 flex flex-col">
-          {/* CHAT TAB */}
-          <TabsContent value="chat" className="flex-1 m-0 data-[state=inactive]:hidden">
-            <div className="flex h-[calc(100vh-7rem)]">
+            {/* CHAT TAB */}
+            <TabsContent value="chat" className="flex-1 m-0 data-[state=inactive]:hidden">
+              <div className="flex h-[calc(100vh-3rem-3.5rem)] md:h-[calc(100vh-3.5rem)]">
               {/* Sidebar: Sessions */}
               <aside className="hidden md:flex w-72 flex-col border-r border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-950/60">
                 <div className="p-3">
@@ -997,6 +1075,7 @@ export default function Home() {
           </TabsContent>
         </Tabs>
       </main>
+      </div>
 
       <Toaster />
     </div>
@@ -1845,4 +1924,47 @@ async function movePriority(
     }),
   ]);
   refresh();
+}
+
+// ---------- Sidebar navigation helpers ----------
+function NavGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-0.5">
+      <div className="px-2 mb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 select-none">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function NavItem({
+  icon: Icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: typeof MessageSquare;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-sm font-medium transition-all group ${
+        active
+          ? "bg-gradient-to-r from-emerald-50 to-cyan-50 dark:from-emerald-950/40 dark:to-cyan-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60 shadow-sm"
+          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70 hover:text-slate-900 dark:hover:text-white border border-transparent"
+      }`}
+    >
+      <Icon
+        className={`w-4 h-4 shrink-0 transition-colors ${
+          active ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300"
+        }`}
+        strokeWidth={2.2}
+      />
+      <span className="truncate">{label}</span>
+    </button>
+  );
 }
