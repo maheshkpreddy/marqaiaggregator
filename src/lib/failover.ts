@@ -319,11 +319,13 @@ async function synthesizeDemoFallback(
   const result = await demoModeCall(provider, req, start);
 
   // Compact, non-alarming banner. We deliberately AVOID words like
-  // "triggered", "unavailable", or listing multiple provider names — those
-  // caused users to think the platform was broken. Instead we frame this
-  // as a momentary connectivity blip and offer a single concrete remedy.
+  // "triggered", "unavailable", "fallback", or listing provider names —
+  // those caused users to think the platform was broken. Instead we frame
+  // this as a momentary connectivity blip and offer a single concrete
+  // remedy (just retry). The banner is also short so it doesn't dominate
+  // the assistant's response.
   const banner = [
-    `> ℹ️ All AI endpoints are briefly unreachable — showing a cached-style response. Try sending the message again in a few seconds; live responses will resume automatically.`,
+    `> ℹ️ Having a brief connectivity hiccup — please hit send again in a second for a live response.`,
     ``,
   ].join("\n");
 

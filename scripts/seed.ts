@@ -56,10 +56,10 @@ async function main() {
     {
       name: "marq_free",
       displayName: "Marq Free (Always-On)",
-      description: "Marq Free — the platform's GUARANTEED-AVAILABILITY provider backed by Pollinations.ai. No API key required, no rate limits to worry about. Uses open-source models (gpt-oss-20b and others) to deliver real AI responses when every paid provider is down or rate-limited. Seeded at the HIGHEST priority so the failover engine tries it FIRST in auto mode — ensuring the platform responds fast and never throws a fallback error to the user.",
+      description: "Marq Free — the platform's GUARANTEED-AVAILABILITY provider backed by Pollinations.ai. No API key required, OpenAI-compatible endpoint, uses open-source models (gpt-oss-20b via the openai alias). Seeded at the HIGHEST priority so the failover engine tries it FIRST in auto mode — ensuring the platform responds fast and never throws a fallback error to the user.",
       apiEndpoint: "https://text.pollinations.ai/openai",
       apiKey: null,
-      models: JSON.stringify(["openai", "openai-large", "mistral", "qwen-coder"]),
+      models: JSON.stringify(["openai", "gpt-oss-20b"]),
       active: true,
       priority: 0,
       color: "#10b981",
@@ -392,7 +392,7 @@ async function main() {
     {
       name: "gemini",
       displayName: "Google Gemini",
-      description: "Gemini 2.5 Flash, Gemini 2.5 Pro. Long-context multimodal reasoning, strong at grounded factual answers and code.",
+      description: "Gemini 2.5 Flash, Gemini 2.5 Pro. Long-context multimodal reasoning, strong at grounded factual answers and code. Generous free tier: 15 RPM, 1500 requests/day — no credit card required. Set GEMINI_API_KEY env var to activate.",
       apiEndpoint: "https://generativelanguage.googleapis.com/v1beta/models",
       apiKey: null,
       models: JSON.stringify(["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash-lite"]),

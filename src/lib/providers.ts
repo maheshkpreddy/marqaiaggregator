@@ -596,9 +596,9 @@ function buildDemoResponse(provider: Provider, req: ProviderChatRequest): string
 
     case "marq_free":
       // This only shows if EVERY Pollinations.ai endpoint and UA pair is
-      // unreachable after 4 attempts — extremely rare. Keep the message
-      // short and non-alarming; the failover engine already prepended a
-      // small banner explaining the situation.
+      // unreachable after multiple attempts — extremely rare. Keep the
+      // message short and non-alarming; the failover engine already
+      // prepended a small banner explaining the situation.
       return [
         `_${persona}_`,
         ``,
@@ -912,7 +912,7 @@ async function callZaiGlm(
  * This is the platform's GUARANTEED-AVAILABILITY provider:
  *   - No API key required (anonymous tier is generous and reliable).
  *   - OpenAI-compatible request/response shape.
- *   - Backed by gpt-oss-20b + other open-source models.
+ *   - Backed by gpt-oss-20b (via the `openai` model alias) + others.
  *   - Free for commercial use (https://pollinations.ai).
  *
  * The marq_free provider is seeded at the LOWEST priority among the
@@ -920,20 +920,33 @@ async function callZaiGlm(
  * (open-source-first policy). This ensures users ALWAYS get a real AI
  * response without needing any API key.
  *
- * ROBUSTNESS STRATEGY:
+ * ROBUSTNESS STRATEGY (v3 — aggressive multi-attempt):
  * Pollinations.ai is fronted by Cloudflare's WAF, which is sometimes
  * aggressive about Vercel/serverless IP ranges (especially the bom1
- * region). To maximize reliability we try a SEQUENCE of strategies:
+ * region). Additionally, the anonymous tier enforces a 1-request-per-IP
+ * concurrency limit and returns 429 ("Queue full for IP") when a second
+ * request arrives while the first is still in flight.
  *
- *   1. POST /openai  with Chrome UA  + model=openai
- *   2. POST /openai  with Safari UA  + model=gpt-oss-20b
- *   3. GET  /<prompt> with Chrome UA + model=openai
- *   4. GET  /<prompt> with Safari UA + model=gpt-oss-20b
+ * To maximize reliability, we use FOUR attempts with the working `openai`
+ * model (gpt-oss-20b alias). Empirical testing shows:
+ *   - Simple prompts ("hi", "2+2"): 300-1000ms
+ *   - Medium prompts (1-sentence): 1-5s
+ *   - Reasoning prompts (multi-sentence): 10-25s
  *
- * Each attempt has a 2.5s timeout (via AbortController) so the total
- * worst-case latency stays under 10s — well within Vercel's Hobby-tier
- * function timeout. As soon as ANY attempt returns valid content, we
- * return immediately.
+ * The first attempt uses a generous 12s timeout for reasoning prompts.
+ * If it fails (timeout/429/network), three additional attempts with
+ * progressively different UAs and exponential backoff give us multiple
+ * chances to succeed. Total worst case: ~22s, within Vercel's 30s
+ * function maxDuration.
+ *
+ * Attempt sequence:
+ *   1. POST /openai  model=openai  Chrome-Linux UA   12s timeout
+ *   2. POST /openai  model=openai  Safari-Mac UA      8s timeout (after 400ms delay)
+ *   3. POST /openai  model=openai  Chrome-Windows UA  8s timeout (after 600ms delay)
+ *   4. GET  /<prompt> model=openai Chrome-Linux UA    6s timeout (after 800ms delay)
+ *
+ * Each attempt returns immediately on success. As soon as ANY attempt
+ * returns valid content, we return it to the caller.
  *
  * If EVERY attempt fails (extremely rare), we throw a ProviderError so
  * the failover engine can fall back to its ultimate demo response.
@@ -950,54 +963,72 @@ async function callPollinations(
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
   ];
 
-  // Models known to be live on Pollinations' anonymous tier. The `openai`
-  // alias maps to gpt-oss-20b server-side; specifying `gpt-oss-20b`
-  // explicitly is a fallback in case the alias is ever removed.
-  const MODELS = ["openai", "gpt-oss-20b"];
+  // Models known to be live on Pollinations' anonymous tier (verified
+  // 2026-07). The `openai` alias is the FASTEST — maps to gpt-oss-20b
+  // server-side but is served from a warmer cache. Other model aliases
+  // (openai-large, mistral, qwen-coder) were deprecated and return 404.
+  // We try `openai` first across all POST attempts, then fall back to
+  // `gpt-oss-20b` explicit on the GET attempt in case the alias is ever
+  // removed server-side.
+  const PRIMARY_MODEL = "openai";
+  const FALLBACK_MODEL = "gpt-oss-20b";
 
-  // Per-attempt timeouts. Pollinations' gpt-oss-20b model has HIGHLY
-  // variable latency:
-  //   - Simple prompts ("hi", "2+2"): 300-1000ms
-  //   - Medium prompts (1-sentence answers): 1-5s
-  //   - Reasoning prompts (multi-sentence answers): 10-25s
-  //
-  // We give the FIRST (POST) attempt a generous 12s timeout so it can
-  // complete medium-to-long prompts. The GET fallback is shorter (5s)
-  // because it's a last-resort attempt — if POST didn't succeed in 12s,
-  // the prompt is probably too long for the anonymous tier and GET won't
-  // help either. Total worst case: 12 + 5 + 0.4s delay = 17.4s, well
-  // within the 30s Vercel function maxDuration configured in vercel.json.
-  const POST_TIMEOUT_MS = 12000;
-  const GET_TIMEOUT_MS = 5000;
-  // Delay between attempts. Pollinations' anonymous tier enforces a
-  // 1-request-per-IP concurrency limit and returns 429 ("Queue full for
-  // IP") when a second request arrives while the first is still in
-  // flight. Aborting our fetch does NOT always cancel the server-side
-  // processing, so we sleep briefly between attempts to give the queue
-  // slot time to free up.
-  const INTER_ATTEMPT_DELAY_MS = 400;
   // Hard cap on total time spent in this function. We bail out before
   // hitting Vercel's function timeout so the caller (failover engine)
   // still has time to record the failure and synthesize a demo fallback
   // response.
-  const HARD_BUDGET_MS = 20000;
+  const HARD_BUDGET_MS = 22000;
 
-  // Build the ordered list of attempts. We use TWO attempts instead of
-  // four because each attempt now needs more time (Pollinations is slow
-  // for reasoning prompts). Two attempts × (12s + 5s) = 17s max, vs
-  // four attempts × 3.5s = 14s — but the four-attempt version aborted
-  // every attempt before Pollinations could finish, so it was useless
-  // for any prompt longer than a greeting.
-  type Attempt = { ua: string; model: string; method: "POST" | "GET"; timeoutMs: number };
+  type Attempt = {
+    ua: string;
+    model: string;
+    method: "POST" | "GET";
+    timeoutMs: number;
+    delayBeforeMs: number;
+  };
+
   const attempts: Attempt[] = [
-    // Attempt 1: POST with Chrome UA + openai model. This handles 95%
-    // of real-world prompts within 12s.
-    { ua: USER_AGENTS[0], model: MODELS[0], method: "POST", timeoutMs: POST_TIMEOUT_MS },
-    // Attempt 2: GET fallback with Safari UA + gpt-oss-20b. Faster
-    // (no JSON parsing), different UA in case Cloudflare is fingerprinting.
-    { ua: USER_AGENTS[1], model: MODELS[1], method: "GET", timeoutMs: GET_TIMEOUT_MS },
+    // Attempt 1: POST with Chrome-Linux UA + openai model. Generous 12s
+    // timeout — handles 95% of real-world prompts including reasoning.
+    {
+      ua: USER_AGENTS[0],
+      model: PRIMARY_MODEL,
+      method: "POST",
+      timeoutMs: 12000,
+      delayBeforeMs: 0,
+    },
+    // Attempt 2: POST with Safari-Mac UA + openai model. Different UA in
+    // case Cloudflare is fingerprinting the Linux Chrome UA. 8s timeout.
+    {
+      ua: USER_AGENTS[1],
+      model: PRIMARY_MODEL,
+      method: "POST",
+      timeoutMs: 8000,
+      delayBeforeMs: 400,
+    },
+    // Attempt 3: POST with Chrome-Windows UA + openai model. Third UA
+    // option. 8s timeout.
+    {
+      ua: USER_AGENTS[2],
+      model: PRIMARY_MODEL,
+      method: "POST",
+      timeoutMs: 8000,
+      delayBeforeMs: 600,
+    },
+    // Attempt 4: GET fallback with explicit gpt-oss-20b model. Different
+    // endpoint shape (plain GET, no JSON body) sometimes bypasses WAF
+    // rules that block POSTs. 6s timeout — if we got here, the prompt
+    // is probably short enough for GET to handle.
+    {
+      ua: USER_AGENTS[0],
+      model: FALLBACK_MODEL,
+      method: "GET",
+      timeoutMs: 6000,
+      delayBeforeMs: 800,
+    },
   ];
 
   // Pre-extract the last user message once (used by GET attempts).
@@ -1011,7 +1042,16 @@ async function callPollinations(
     // Hard-budget check: bail out if we've already spent too long.
     if (Date.now() - start > HARD_BUDGET_MS) break;
 
-    const { ua, model, method, timeoutMs } = attempts[i];
+    const { ua, model, method, timeoutMs, delayBeforeMs } = attempts[i];
+
+    // Inter-attempt delay (skipped on the first attempt). Gives the per-IP
+    // queue slot time to free up before the next attempt fires. Without
+    // this, attempt N+1 often arrives while Pollinations is still
+    // processing attempt N (which we aborted client-side but the server
+    // may not have noticed yet), resulting in a 429.
+    if (delayBeforeMs > 0) {
+      await sleep(delayBeforeMs);
+    }
 
     // Per-attempt AbortController. We combine it with the caller's signal
     // so either one aborting cancels the in-flight fetch.
@@ -1097,15 +1137,6 @@ async function callPollinations(
       // Network error / timeout — fall through to the next attempt.
     } finally {
       clearTimeout(timer);
-    }
-
-    // Inter-attempt delay: give the per-IP queue slot time to free up
-    // before the next attempt fires. Without this, attempt N+1 often
-    // arrives while Pollinations is still processing attempt N (which we
-    // aborted client-side but the server may not have noticed yet),
-    // resulting in a 429.
-    if (i < attempts.length - 1) {
-      await sleep(INTER_ATTEMPT_DELAY_MS);
     }
   }
 
