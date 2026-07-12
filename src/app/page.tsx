@@ -857,90 +857,9 @@ export default function Home() {
 
               {/* Chat Area */}
               <section className="flex-1 flex flex-col min-w-0">
-                {/* Provider selection bar */}
-                <div className="border-b border-slate-200 dark:border-slate-800 p-3 bg-white/60 dark:bg-slate-950/60">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-medium text-slate-600 dark:text-slate-300 mr-1">
-                      Primary:
-                    </span>
-                    {/* Auto (best available) — no primary pinned; server picks the healthiest provider */}
-                    <button
-                      onClick={() => {
-                        setPrimaryProviderId(null);
-                        setSelectedModel("");
-                      }}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                        primaryProviderId === null
-                          ? "border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 shadow-sm"
-                          : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400"
-                      }`}
-                      title="Marq picks the best available provider automatically and falls over if one is down."
-                    >
-                      <Zap className="w-3.5 h-3.5" />
-                      Auto
-                      {primaryProviderId === null && (
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      )}
-                    </button>
-                    {providers.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => {
-                          setPrimaryProviderId(p.id);
-                          setSelectedModel(p.models[0] ?? "");
-                        }}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                          primaryProviderId === p.id
-                            ? "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm"
-                            : "border-transparent hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-400"
-                        }`}
-                        style={primaryProviderId === p.id ? { borderColor: p.color, color: p.color } : undefined}
-                      >
-                        <ProviderIcon icon={p.icon} color={p.color} size={14} />
-                        {p.displayName}
-                        {primaryProviderId === p.id && (
-                          <span
-                            className="inline-block w-1.5 h-1.5 rounded-full"
-                            style={{ backgroundColor: statusMeta[p.status].color }}
-                          />
-                        )}
-                      </button>
-                    ))}
-                    <div className="flex-1" />
-                    {availableModels.length > 0 && (
-                      <select
-                        value={selectedModel}
-                        onChange={(e) => setSelectedModel(e.target.value)}
-                        className="text-xs bg-transparent border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 outline-none focus:border-emerald-500"
-                      >
-                        <option value="">Auto model</option>
-                        {availableModels.map((m) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                  <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                    <Zap className="w-3 h-3 text-amber-500" />
-                    <span>
-                      Failover chain:{" "}
-                      <span className="font-medium text-slate-700 dark:text-slate-300">
-                        {primaryProviderId === null
-                          ? "Auto (healthiest provider first)"
-                          : providers
-                              .slice()
-                              .sort((a, b) => {
-                                // pinned primary first, then by priority
-                                if (a.id === primaryProviderId) return -1;
-                                if (b.id === primaryProviderId) return 1;
-                                return a.priority - b.priority;
-                              })
-                              .map((p) => p.displayName)
-                              .join(" → ")}
-                      </span>
-                    </span>
-                  </div>
-                </div>
+                {/* Provider selection bar hidden — chat uses Auto mode by default.
+                    The full provider list, failover chain, and per-provider pinning
+                    are still available in the Providers / Compare tabs. */}
 
                 {/* Messages */}
                 <div ref={scrollRef} className="flex-1 overflow-y-auto">
