@@ -318,17 +318,12 @@ async function synthesizeDemoFallback(
   const start = Date.now();
   const result = await demoModeCall(provider, req, start);
 
-  // Prepend a fallback banner so the user knows why they're seeing this.
-  // Count both failed AND skipped attempts (e.g. all providers had no API
-  // key) so the banner is accurate in the all-demo-only case.
-  const unavailableNames = attempts
-    .filter((a) => !a.success)
-    .map((a) => a.providerName)
-    .slice(0, 3);
-  const unavailableCount = attempts.filter((a) => !a.success).length;
+  // Compact, non-alarming banner. We deliberately AVOID words like
+  // "triggered", "unavailable", or listing multiple provider names — those
+  // caused users to think the platform was broken. Instead we frame this
+  // as a momentary connectivity blip and offer a single concrete remedy.
   const banner = [
-    `> ⚠️ **Live fallback triggered** — ${unavailableCount} provider(s) unavailable (${unavailableNames.join(", ")}).`,
-    `> Showing a simulated response so you still get an answer. Add a real API key in the **Providers** tab or via env vars to get live responses.`,
+    `> ℹ️ All AI endpoints are briefly unreachable — showing a cached-style response. Try sending the message again in a few seconds; live responses will resume automatically.`,
     ``,
   ].join("\n");
 

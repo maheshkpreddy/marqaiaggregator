@@ -4,6 +4,17 @@
   "buildCommand": "bash ./vercel-build.sh",
   "installCommand": "npm install --legacy-peer-deps",
   "regions": ["bom1"],
+  "functions": {
+    "src/app/api/chat/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/agent/chat/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/v1/chat/completions/route.ts": {
+      "maxDuration": 30
+    }
+  },
   "env": {
     "NEXT_PUBLIC_APP_NAME": "Marq AI Aggregator"
   }

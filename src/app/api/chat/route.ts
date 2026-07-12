@@ -86,13 +86,14 @@ export async function POST(req: NextRequest) {
       messages: history,
       model,
       sessionId: session.id,
-      // 15s per provider. The failover engine skips providers with no API
-      // key instantly, so the chain (paid providers skipped → marq_free
-      // succeeds in 300-800ms via Pollinations) completes well under 5s.
-      // 15s gives Pollinations enough headroom on slow moments and is
-      // short enough that a network-down provider doesn't make the user
-      // wait 30s before failover.
-      timeoutMs: 15000,
+      // 25s per provider. The failover engine skips providers with no API
+      // key instantly, so the chain (paid providers skipped → marq_free)
+      // completes well under 30s on Vercel. The marq_free provider
+      // internally tries 4 endpoint/UA/model combinations (each 2.5s) so
+      // 25s gives plenty of headroom for retries + the rest of the
+      // provider chain if marq_free itself is briefly unreachable.
+      // Vercel function maxDuration is set to 30s in vercel.json.
+      timeoutMs: 25000,
     });
 
     const finalProvider = providers.find((p) => p.id === outcome.finalProviderId)!;

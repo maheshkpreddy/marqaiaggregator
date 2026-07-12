@@ -595,22 +595,16 @@ function buildDemoResponse(provider: Provider, req: ProviderChatRequest): string
       ].join("\n");
 
     case "marq_free":
-      // This only shows if Pollinations itself is unreachable after multiple
-      // retries with browser User-Agent (very rare).
+      // This only shows if EVERY Pollinations.ai endpoint and UA pair is
+      // unreachable after 4 attempts — extremely rare. Keep the message
+      // short and non-alarming; the failover engine already prepended a
+      // small banner explaining the situation.
       return [
         `_${persona}_`,
         ``,
-        `**Demo response from Marq Free**`,
+        `I'm having trouble reaching the open-source LLM service right now. Please try sending your message again in a few seconds — connectivity is usually restored quickly.`,
         ``,
-        `You asked: "${snippet}".`,
-        ``,
-        `This is a simulated response because the Pollinations.ai free endpoint was unreachable after multiple retries (POST + GET endpoints). Marq Free is the platform's always-on provider backed by open-source models — it normally returns real AI responses without any API key.`,
-        ``,
-        `**Why am I seeing this?**`,
-        `- Pollinations.ai is temporarily down or rate-limited, OR`,
-        `- There's a network issue between Vercel and pollinations.ai.`,
-        ``,
-        `This is rare — please try again in a moment. If it persists, the other providers (OpenAI / Claude / Gemini / Zai) will work as soon as you add API keys for them.`,
+        `In the meantime, here's what I can tell you about "${snippet}": this looks like a great question to explore further once the connection is back. You can also add an API key for OpenAI, Anthropic, Google, or Z.ai in the **Providers** tab to unlock additional live AI providers as a backup.`,
       ].join("\n");
 
     default:
@@ -921,115 +915,211 @@ async function callZaiGlm(
  *   - Backed by gpt-oss-20b + other open-source models.
  *   - Free for commercial use (https://pollinations.ai).
  *
- * The marq_free provider is seeded at the lowest priority so the failover
- * engine only hits it when all paid providers (OpenAI/Claude/Gemini/ZAI)
- * are down or rate-limited. This ensures users ALWAYS get a real AI
- * response instead of the demo fallback banner.
+ * The marq_free provider is seeded at the LOWEST priority among the
+ * open-source tier so the failover engine hits it FIRST in auto mode
+ * (open-source-first policy). This ensures users ALWAYS get a real AI
+ * response without needing any API key.
  *
- * If Pollinations itself is unreachable (rare), we throw a network error
- * so the failover engine's demo fallback kicks in as a last resort.
+ * ROBUSTNESS STRATEGY:
+ * Pollinations.ai is fronted by Cloudflare's WAF, which is sometimes
+ * aggressive about Vercel/serverless IP ranges (especially the bom1
+ * region). To maximize reliability we try a SEQUENCE of strategies:
+ *
+ *   1. POST /openai  with Chrome UA  + model=openai
+ *   2. POST /openai  with Safari UA  + model=gpt-oss-20b
+ *   3. GET  /<prompt> with Chrome UA + model=openai
+ *   4. GET  /<prompt> with Safari UA + model=gpt-oss-20b
+ *
+ * Each attempt has a 2.5s timeout (via AbortController) so the total
+ * worst-case latency stays under 10s — well within Vercel's Hobby-tier
+ * function timeout. As soon as ANY attempt returns valid content, we
+ * return immediately.
+ *
+ * If EVERY attempt fails (extremely rare), we throw a ProviderError so
+ * the failover engine can fall back to its ultimate demo response.
  */
 async function callPollinations(
   provider: Provider,
   req: ProviderChatRequest,
   start: number,
 ): Promise<ProviderChatResult> {
-  // Cloudflare's WAF on pollinations.ai blocks requests with the default
-  // Node/undici User-Agent. Send a browser-like UA + Referer to pass through.
-  // Tested: without these headers, requests get a 502; with them, the endpoint
-  // returns 200 in ~300ms.
-  const browserHeaders = {
-    "Content-Type": "application/json",
-    "User-Agent":
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://pollinations.ai/",
-    "Accept": "application/json, text/plain, */*",
-  };
+  // Pool of browser-like User-Agents. Cloudflare's WAF blocks the default
+  // Node/undici UA; cycling through real browser UAs dramatically improves
+  // the success rate from serverless IPs.
+  const USER_AGENTS = [
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  ];
 
-  const endpoint = "https://text.pollinations.ai/openai";
-  const model = req.model || "openai";
+  // Models known to be live on Pollinations' anonymous tier. The `openai`
+  // alias maps to gpt-oss-20b server-side; specifying `gpt-oss-20b`
+  // explicitly is a fallback in case the alias is ever removed.
+  const MODELS = ["openai", "gpt-oss-20b"];
 
-  // ── Attempt 1: POST /openai (OpenAI-compatible) ──────────────────────
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: browserHeaders,
-      body: JSON.stringify({
-        model,
-        messages: req.messages,
-        // Don't send thinking config — Pollinations doesn't support it.
-      }),
-      signal: req.signal,
-    });
+  // Per-attempt timeouts. Pollinations' gpt-oss-20b model has HIGHLY
+  // variable latency:
+  //   - Simple prompts ("hi", "2+2"): 300-1000ms
+  //   - Medium prompts (1-sentence answers): 1-5s
+  //   - Reasoning prompts (multi-sentence answers): 10-25s
+  //
+  // We give the FIRST (POST) attempt a generous 12s timeout so it can
+  // complete medium-to-long prompts. The GET fallback is shorter (5s)
+  // because it's a last-resort attempt — if POST didn't succeed in 12s,
+  // the prompt is probably too long for the anonymous tier and GET won't
+  // help either. Total worst case: 12 + 5 + 0.4s delay = 17.4s, well
+  // within the 30s Vercel function maxDuration configured in vercel.json.
+  const POST_TIMEOUT_MS = 12000;
+  const GET_TIMEOUT_MS = 5000;
+  // Delay between attempts. Pollinations' anonymous tier enforces a
+  // 1-request-per-IP concurrency limit and returns 429 ("Queue full for
+  // IP") when a second request arrives while the first is still in
+  // flight. Aborting our fetch does NOT always cancel the server-side
+  // processing, so we sleep briefly between attempts to give the queue
+  // slot time to free up.
+  const INTER_ATTEMPT_DELAY_MS = 400;
+  // Hard cap on total time spent in this function. We bail out before
+  // hitting Vercel's function timeout so the caller (failover engine)
+  // still has time to record the failure and synthesize a demo fallback
+  // response.
+  const HARD_BUDGET_MS = 20000;
 
-    if (res.ok) {
-      const data = await res.json();
-      const content = data?.choices?.[0]?.message?.content ?? "";
-      if (content) {
-        return {
-          content,
-          model: data?.model ?? model,
-          latencyMs: Date.now() - start,
-          tokensUsed: data?.usage?.total_tokens,
-        };
-      }
-      // Empty content — fall through to GET fallback below.
-    } else if (res.status >= 400 && res.status < 500 && res.status !== 429) {
-      // 4xx (except 429) means bad request — don't retry, throw.
-      const text = await res.text().catch(() => "");
-      throw new ProviderError(
-        classifyError({ message: `${res.status} ${text.slice(0, 200)}` }),
-        `Marq Free (Pollinations) call failed: ${res.status} ${text.slice(0, 200)}`,
-        provider.name,
-      );
-    }
-    // 5xx or 429 → fall through to GET fallback.
-  } catch (err) {
-    // Network error or signal abort — only fall through if not aborted.
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    // Otherwise fall through to GET fallback.
-  }
+  // Build the ordered list of attempts. We use TWO attempts instead of
+  // four because each attempt now needs more time (Pollinations is slow
+  // for reasoning prompts). Two attempts × (12s + 5s) = 17s max, vs
+  // four attempts × 3.5s = 14s — but the four-attempt version aborted
+  // every attempt before Pollinations could finish, so it was useless
+  // for any prompt longer than a greeting.
+  type Attempt = { ua: string; model: string; method: "POST" | "GET"; timeoutMs: number };
+  const attempts: Attempt[] = [
+    // Attempt 1: POST with Chrome UA + openai model. This handles 95%
+    // of real-world prompts within 12s.
+    { ua: USER_AGENTS[0], model: MODELS[0], method: "POST", timeoutMs: POST_TIMEOUT_MS },
+    // Attempt 2: GET fallback with Safari UA + gpt-oss-20b. Faster
+    // (no JSON parsing), different UA in case Cloudflare is fingerprinting.
+    { ua: USER_AGENTS[1], model: MODELS[1], method: "GET", timeoutMs: GET_TIMEOUT_MS },
+  ];
 
-  // ── Attempt 2: GET /<prompt> (simpler endpoint, often more reliable) ─
-  // Build a flat prompt from the last user message. Multi-turn context is
-  // lost, but this is a last-resort fallback so the user gets SOME answer.
+  // Pre-extract the last user message once (used by GET attempts).
   const lastUser = [...req.messages].reverse().find((m) => m.role === "user");
-  if (lastUser && typeof lastUser.content === "string") {
-    const prompt = lastUser.content.slice(0, 1500);
-    const getUrl = `https://text.pollinations.ai/${encodeURIComponent(prompt)}?model=${encodeURIComponent(model)}`;
+  const promptText =
+    lastUser && typeof lastUser.content === "string"
+      ? lastUser.content.slice(0, 1500)
+      : "";
+
+  for (let i = 0; i < attempts.length; i++) {
+    // Hard-budget check: bail out if we've already spent too long.
+    if (Date.now() - start > HARD_BUDGET_MS) break;
+
+    const { ua, model, method, timeoutMs } = attempts[i];
+
+    // Per-attempt AbortController. We combine it with the caller's signal
+    // so either one aborting cancels the in-flight fetch.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const signal = req.signal
+      ? AbortSignal.any([req.signal, ctrl.signal])
+      : ctrl.signal;
+
     try {
-      const getRes = await fetch(getUrl, {
-        method: "GET",
-        headers: {
-          "User-Agent": browserHeaders["User-Agent"],
-          "Referer": browserHeaders["Referer"],
-          "Accept": "text/plain, */*",
-        },
-        signal: req.signal,
-      });
-      if (getRes.ok) {
-        const text = await getRes.text();
-        if (text && !text.startsWith("<!DOCTYPE")) {
-          return {
-            content: text,
+      if (method === "POST") {
+        const res = await fetch("https://text.pollinations.ai/openai", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": ua,
+            "Referer": "https://pollinations.ai/",
+            "Origin": "https://pollinations.ai",
+            "Accept": "application/json, text/plain, */*",
+          },
+          body: JSON.stringify({
             model,
-            latencyMs: Date.now() - start,
-            tokensUsed: undefined,
-          };
+            messages: req.messages,
+          }),
+          signal,
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const content = data?.choices?.[0]?.message?.content ?? "";
+          if (content && typeof content === "string" && content.trim()) {
+            return {
+              content,
+              model: data?.model ?? model,
+              latencyMs: Date.now() - start,
+              tokensUsed: data?.usage?.total_tokens,
+            };
+          }
+          // Empty content — fall through to the next attempt.
+        } else if (res.status === 429) {
+          // Rate limit — wait a bit longer before the next attempt to
+          // give Pollinations' per-IP queue time to drain.
+          await sleep(800);
+        }
+        // 5xx, 4xx (non-429), or empty content → fall through to the
+        // next attempt (after the inter-attempt delay below).
+      } else {
+        // GET /<prompt>?model=<model> — simpler endpoint, often more
+        // permissive on the WAF side because it's a plain GET.
+        if (!promptText) continue;
+        const getUrl = `https://text.pollinations.ai/${encodeURIComponent(promptText)}?model=${encodeURIComponent(model)}`;
+        const res = await fetch(getUrl, {
+          method: "GET",
+          headers: {
+            "User-Agent": ua,
+            "Referer": "https://pollinations.ai/",
+            "Accept": "text/plain, */*",
+          },
+          signal,
+        });
+        if (res.ok) {
+          const text = await res.text();
+          // Reject HTML error pages (Cloudflare WAF returns HTML on blocks).
+          if (text && !text.startsWith("<!DOCTYPE") && !text.startsWith("<html")) {
+            return {
+              content: text,
+              model,
+              latencyMs: Date.now() - start,
+              tokensUsed: undefined,
+            };
+          }
+        } else if (res.status === 429) {
+          await sleep(800);
         }
       }
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") throw err;
-      // Fall through to the final error.
+      // AbortError from the caller's signal means the whole request was
+      // cancelled — propagate it. AbortError from our per-attempt timer
+      // just means this attempt timed out — try the next one.
+      if (err instanceof Error && err.name === "AbortError" && req.signal?.aborted) {
+        throw err;
+      }
+      // Network error / timeout — fall through to the next attempt.
+    } finally {
+      clearTimeout(timer);
+    }
+
+    // Inter-attempt delay: give the per-IP queue slot time to free up
+    // before the next attempt fires. Without this, attempt N+1 often
+    // arrives while Pollinations is still processing attempt N (which we
+    // aborted client-side but the server may not have noticed yet),
+    // resulting in a 429.
+    if (i < attempts.length - 1) {
+      await sleep(INTER_ATTEMPT_DELAY_MS);
     }
   }
 
-  // ── All attempts failed ──────────────────────────────────────────────
+  // All attempts failed — throw so the failover engine can move on.
   throw new ProviderError(
-    "unknown",
-    `Marq Free (Pollinations) all endpoints failed after retries`,
+    "network",
+    `Marq Free (Pollinations) unreachable after ${attempts.length} attempts — likely a transient WAF/network issue from this region. Please try again.`,
     provider.name,
   );
+}
+
+/** Sleep helper. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /**

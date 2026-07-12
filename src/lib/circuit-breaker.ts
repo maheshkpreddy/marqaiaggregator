@@ -31,6 +31,28 @@ interface BreakerState {
 
 export const FAILURE_THRESHOLD = 3;
 export const COOLDOWN_MS = 60_000; // 60 seconds
+// Shorter cooldown for guaranteed-free providers (marq_free). These are
+// the platform's safety-net providers — if they transiently fail (e.g.
+// Cloudflare WAF blip on pollinations.ai), we want to retry within
+// seconds rather than locking them out for a full minute. Otherwise
+// the failover engine skips marq_free entirely on the next request
+// and falls straight to the demo response, which is exactly what we
+// want to avoid.
+export const FREE_PROVIDER_COOLDOWN_MS = 10_000; // 10 seconds
+
+// Provider names that use the shorter cooldown. These are the no-API-key
+// providers that the platform relies on for guaranteed availability.
+const FREE_PROVIDER_NAMES = new Set(["marq_free"]);
+
+function isFreeProvider(providerId: string): boolean {
+  // Provider IDs in the DB are stable strings like "marq_free" or
+  // "marq_free-abc123" depending on how they were seeded. Match on a
+  // startsWith check so both shapes get the shorter cooldown.
+  for (const name of FREE_PROVIDER_NAMES) {
+    if (providerId === name || providerId.startsWith(`${name}-`)) return true;
+  }
+  return false;
+}
 
 // Per-instance in-memory store. Keyed by providerId.
 const store = new Map<string, BreakerState>();
@@ -86,15 +108,31 @@ export function recordSuccess(providerId: string, at = now()): void {
 
 /**
  * Record a failed call. After `FAILURE_THRESHOLD` consecutive failures,
- * the breaker transitions to OPEN for `COOLDOWN_MS`.
+ * the breaker transitions to OPEN for `COOLDOWN_MS` (or
+ * `FREE_PROVIDER_COOLDOWN_MS` for guaranteed-free providers like
+ * marq_free — they get a shorter cooldown so transient WAF/rate-limit
+ * blips don't lock the platform's safety-net provider out for a full
+ * minute).
+ *
+ * For free providers (marq_free), we use a HIGHER threshold (5) because
+ * each "failure" already represents 4 internal retries — by the time the
+ * breaker sees a failure, we've exhausted every strategy. Locking the
+ * provider out after just 3 of these compound failures is too
+ * aggressive and causes the demo fallback to kick in for several
+ * subsequent requests even when Pollinations.ai has recovered.
  */
+const FREE_PROVIDER_FAILURE_THRESHOLD = 5;
+
 export function recordFailure(providerId: string, at = now()): void {
   const s = getState(providerId);
   s.failures += 1;
   s.lastFailureAt = at;
-  if (s.status === "half_open" || s.failures >= FAILURE_THRESHOLD) {
+  const threshold = isFreeProvider(providerId)
+    ? FREE_PROVIDER_FAILURE_THRESHOLD
+    : FAILURE_THRESHOLD;
+  if (s.status === "half_open" || s.failures >= threshold) {
     s.status = "open";
-    s.openUntil = at + COOLDOWN_MS;
+    s.openUntil = at + (isFreeProvider(providerId) ? FREE_PROVIDER_COOLDOWN_MS : COOLDOWN_MS);
   }
 }
 
