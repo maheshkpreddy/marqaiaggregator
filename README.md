@@ -1,23 +1,71 @@
 # Marq AI Aggregator Platform
 
-A unified AI gateway that connects **OpenAI**, **Google Gemini**, and **Anthropic Claude** under one workspace with automatic **failover**. When one provider goes down, Marq seamlessly routes your request to the next provider in your priority chain.
+A **multi-tenant SaaS platform** that unifies **60+ AI providers** — OpenAI, Anthropic Claude, Google Gemini, xAI Grok, Zai, Mistral, DeepSeek, Qwen, Llama, Ollama, vLLM, Hugging Face, and many more — under one workspace, one API, and one subscription. When a provider goes down, Marq seamlessly routes your request to the next provider in your priority chain.
 
-Use Marq as the **backup plan** for any AI-powered application — point your app at a single endpoint and never worry about a single provider outage again.
+Use Marq as the **unified gateway** for any AI-powered application — point your app at a single OpenAI-compatible endpoint and never worry about a single provider outage again. Sell the same capability to your customers as a SaaS.
 
 ![Marq AI](https://img.shields.io/badge/Marq-AI%20Aggregator-10b981?style=for-the-badge)
 ![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=next.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?style=for-the-badge&logo=typescript)
 ![Prisma](https://img.shields.io/badge/Prisma-ORM-2d3748?style=for-the-badge&logo=prisma)
+![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?style=for-the-badge&logo=vercel)
+![License](https://img.shields.io/badge/License-MIT-10b981?style=for-the-badge)
+
+---
+
+## Documentation
+
+Complete documentation lives in [`/docs`](./docs) and is also available in-product under the **Docs** tab.
+
+| Doc | Audience | What it covers |
+|---|---|---|
+| [01-Functionality.md](./docs/01-Functionality.md) | Product owners, BAs | What each module does, who uses it, what it must support |
+| [02-Technical.md](./docs/02-Technical.md) | Engineers | Stack, architecture, data model, API design, security |
+| [03-Developer.md](./docs/03-Developer.md) | Contributors | Local dev setup, testing, contribution flow |
+| [04-User-SOPs.md](./docs/04-User-SOPs.md) | Operators | Step-by-step playbooks for common tasks |
+| [05-SaaS-Unified-API.md](./docs/05-SaaS-Unified-API.md) | CTOs, integrators | Multi-tenant SaaS architecture, unified API, integration patterns |
+
+---
+
+## Module organization
+
+The product is organized into four functional groups plus a help area:
+
+### Build
+- **Chat** — Conversational interface with sessions, Auto mode, and failover.
+- **Compare** — Run one prompt across N providers in parallel.
+- **Agent** — Role-based agents with tool use and persistent sessions (147 templates).
+- **Prompts** — Reusable prompt library with templating.
+
+### Discover
+- **AI Directory** — Catalog of all 60+ integrated AIs with rich metadata.
+- **Guide** — Practical provider-by-provider setup guide.
+
+### Settings
+- **AI** — Configure providers, API keys, priorities.
+- **Health** — Live status, failover log, circuit breakers.
+- **Failovers** — Detailed failover event log.
+- **Analytics** — Requests/day, latency p50/p95, error rate.
+- **Team** — Members, roles, organizations.
+- **API Keys** — Generate per-tenant API keys for programmatic access.
+
+### Help
+- **Docs** — In-product technical, functional, and SOP documentation.
 
 ---
 
 ## Features
 
-- **Unified Chat API** — One endpoint, every model. `POST /api/chat` with `{ message, primaryProviderId?, model? }`.
+- **Unified Chat API** — One endpoint, every model. `POST /api/chat` with auto-failover.
+- **SaaS Unified API** — OpenAI-compatible `POST /api/v1/chat/completions` for corporates & third-party products.
 - **Automatic Failover** — Tries providers in priority order. If the primary fails (timeout, rate limit, server error, auth, network), Marq falls over to the next and logs the transition.
-- **Provider Management UI** — Add, edit, enable/disable, reorder, and configure API keys for any AI provider.
+- **Side-by-side Comparison** — Run the same prompt across N providers in parallel; compare outputs, latency, and token usage.
+- **Multi-tenant by Design** — Per-org isolation, role-based access (owner / admin / member / viewer), per-tenant API keys.
+- **60+ AI Providers** — OpenAI, Anthropic, Gemini, Grok, Zai, Mistral, DeepSeek, Qwen, Llama, Ollama, vLLM, Hugging Face, LocalAI, LM Studio, Jan, GPT4All, llama.cpp, and 40+ more (see the AI Directory).
+- **Role-based Agents** — 147 pre-built agent templates (researcher, coder, analyst, etc.) with tool use.
 - **Health Dashboard** — Live status, latency, last error, and 24h failover metrics for every provider.
 - **Failover Log** — Every failover event with from→to providers, reason, error message, and timestamp.
+- **Circuit Breakers** — Auto-open after N failures; auto-half-open probe to detect recovery.
 - **Multi-session Chat** — Conversation history with per-session provider attribution.
 
 ---

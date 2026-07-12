@@ -81,6 +81,7 @@ import { ProviderGuidePanel } from "@/components/provider-guide-panel";
 import { AgentPanel } from "@/components/agent-panel";
 import { AIDirectoryPanel } from "@/components/ai-directory-panel";
 import { AIAnalyticsDashboard } from "@/components/ai-analytics-dashboard";
+import { DocumentationPanel } from "@/components/documentation-panel";
 
 // ---------- Auth types ----------
 interface AuthUser {
@@ -323,7 +324,7 @@ export default function Home() {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "analytics">("chat");
+  const [tab, setTab] = useState<"chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "analytics" | "docs">("chat");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -729,11 +730,12 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Row 2: tab bar — scrollable horizontally on small screens, grouped into logical clusters */}
+        {/* Row 2: tab bar — grouped into functional categories (Build / Discover / Settings / Docs) */}
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <div className="px-4 md:px-8 pb-2 overflow-x-auto">
-            <TabsList className="bg-slate-100 dark:bg-slate-900 h-9">
-              {/* Cluster 1: Build (chat, compare, prompts, agent) */}
+            <TabsList className="bg-slate-100 dark:bg-slate-900 h-9 flex-wrap sm:flex-nowrap">
+              {/* ── Build ── */}
+              <span className="hidden md:flex items-center px-2 text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none">Build</span>
               <TabsTrigger value="chat" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
                 <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Chat</span>
@@ -751,8 +753,9 @@ export default function Home() {
                 <span className="hidden sm:inline">Prompts</span>
               </TabsTrigger>
 
-              {/* Cluster 2: Discover (directory, guide) */}
-              <TabsTrigger value="directory" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 border-l border-slate-200/70 dark:border-slate-800/70 ml-1">
+              {/* ── Discover ── */}
+              <span className="hidden md:flex items-center px-2 ml-1 border-l border-slate-200/70 dark:border-slate-800/70 text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none">Discover</span>
+              <TabsTrigger value="directory" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
                 <Network className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">AI Directory</span>
               </TabsTrigger>
@@ -761,10 +764,11 @@ export default function Home() {
                 <span className="hidden sm:inline">Guide</span>
               </TabsTrigger>
 
-              {/* Cluster 3: Admin (analytics, health, failovers, providers) */}
-              <TabsTrigger value="analytics" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 border-l border-slate-200/70 dark:border-slate-800/70 ml-1">
-                <BarChart3 className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Analytics</span>
+              {/* ── Settings ── */}
+              <span className="hidden md:flex items-center px-2 ml-1 border-l border-slate-200/70 dark:border-slate-800/70 text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none">Settings</span>
+              <TabsTrigger value="providers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <Settings2 className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">AI</span>
               </TabsTrigger>
               <TabsTrigger value="health" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
                 <Activity className="w-3.5 h-3.5 mr-1.5" />
@@ -774,19 +778,24 @@ export default function Home() {
                 <Shield className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Failovers</span>
               </TabsTrigger>
-              <TabsTrigger value="providers" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
-                <Settings2 className="w-3.5 h-3.5 mr-1.5" />
-                <span className="hidden sm:inline">Providers</span>
+              <TabsTrigger value="analytics" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <BarChart3 className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Analytics</span>
               </TabsTrigger>
-
-              {/* Cluster 4: Org (team, api keys) */}
-              <TabsTrigger value="org" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 border-l border-slate-200/70 dark:border-slate-800/70 ml-1">
+              <TabsTrigger value="org" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
                 <Users className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">Team</span>
               </TabsTrigger>
               <TabsTrigger value="apikeys" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
                 <Key className="w-3.5 h-3.5 mr-1.5" />
                 <span className="hidden sm:inline">API Keys</span>
+              </TabsTrigger>
+
+              {/* ── Docs ── */}
+              <span className="hidden md:flex items-center px-2 ml-1 border-l border-slate-200/70 dark:border-slate-800/70 text-[10px] font-bold uppercase tracking-widest text-slate-400 select-none">Help</span>
+              <TabsTrigger value="docs" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800">
+                <FileText className="w-3.5 h-3.5 mr-1.5" />
+                <span className="hidden sm:inline">Docs</span>
               </TabsTrigger>
             </TabsList>
           </div>
@@ -980,6 +989,11 @@ export default function Home() {
           {/* API KEYS TAB */}
           <TabsContent value="apikeys" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
             <ApiKeysPanel auth={{ role: authRole }} />
+          </TabsContent>
+
+          {/* DOCS TAB — in-product technical, functional, and SOP documentation */}
+          <TabsContent value="docs" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <DocumentationPanel />
           </TabsContent>
         </Tabs>
       </main>
