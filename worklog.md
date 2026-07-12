@@ -925,3 +925,23 @@ Stage Summary:
 - Every AI card now displays colored modality badges so users can see at a glance what each AI can do (e.g., OpenAI shows 9 badges, OpenCV shows Vision+Image+Video, CrewAI shows Agents+Tools+Code).
 - Filter combinations stack: selecting "Voice" + "Agents" + "very-high popularity" shows only AIs that match all three.
 - Build green, types green, lint green — ready to push to GitHub → Vercel auto-deploy.
+
+---
+Task ID: post-0a5f71e
+Agent: main (continuation)
+Task: Integrate AnythingLLM, Atomic Chat, and Open WebUI into AI Directory; rest of user's 31-AI list already present.
+
+Work Log:
+- Cross-referenced user's 31-item list against existing PROVIDER_BENEFITS entries.
+- Found 28 of 31 already present; only AnythingLLM, Atomic Chat, and Open WebUI were missing.
+- Wrote scripts/add-missing-ais.py — idempotent Python script that appends entries before the closing `];` of PROVIDER_BENEFITS, with a per-entry idempotency check on the `name:` field.
+- Ran the script — inserted 3 entries with full metadata: tagline, icon, color, category, kind, popularity, bestFor, capabilities, whenToUse, limitations, samplePrompts, setupNotes, pricingTier, docsUrl, availableModels, availableAgents, advantages, businessAdvantages, apiIntegrationDetails, modalities.
+- AnythingLLM tagged modalities: chat, agents, tools, embeddings.
+- Atomic Chat tagged modalities: chat, code.
+- Open WebUI tagged modalities: chat, voice, image, vision, code, agents, tools, embeddings.
+- Verified: npx tsc --noEmit passes (no errors). npx next build green (29 routes compiled).
+
+Stage Summary:
+- Total AI Directory entries: 59 -> 62.
+- All 31 AIs from user's latest list now integrated.
+- Build green, ready to commit + push to trigger Vercel deploy.
