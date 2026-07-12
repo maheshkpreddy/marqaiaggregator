@@ -9,7 +9,11 @@ import {
   Sparkles, HardDrive, Bot, Code, Server, Layout, Database, Users, Link as LinkIcon, Atom,
   Search, CheckCircle2, AlertTriangle, Lightbulb, Wrench, BookOpen, ExternalLink, Copy,
   ChevronDown, ChevronUp, Flame, TrendingUp, Boxes, Eye, FlaskConical, Layers, Brain, Wind,
-  Cpu, Shield, Network, type LucideIcon,
+  Cpu, Shield, Network,
+  // New icons for infrabase.ai alternatives
+  Code2, MonitorSmartphone, Coffee, Laptop, Workflow, Router, Braces, Triangle,
+  ShieldCheck, Leaf, Zap, MousePointerClick, Globe, ToggleLeft,
+  type LucideIcon,
 } from "lucide-react";
 import {
   PROVIDER_BENEFITS,
@@ -20,8 +24,12 @@ import {
 
 // Icon resolver — maps the string icon name in the data file to the actual Lucide component.
 const ICON_MAP: Record<string, LucideIcon> = {
+  // Original icons
   Sparkles, HardDrive, Bot, Code, Server, Layout, Database, Users, Link: LinkIcon, Atom,
   FlaskConical, Layers, Eye, Boxes, Wind, Brain, Wrench, Shield, Cpu, Network,
+  // New icons for infrabase.ai alternatives
+  Code2, MonitorSmartphone, Coffee, Laptop, Workflow, Router, Braces, Triangle,
+  ShieldCheck, Leaf, Zap, MousePointerClick, Globe, ToggleLeft,
 };
 
 const POPULARITY_COLORS: Record<ProviderBenefit["popularity"], string> = {
