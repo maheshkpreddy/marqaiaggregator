@@ -595,7 +595,8 @@ function buildDemoResponse(provider: Provider, req: ProviderChatRequest): string
       ].join("\n");
 
     case "marq_free":
-      // This only shows if Pollinations itself is unreachable (very rare).
+      // This only shows if Pollinations itself is unreachable after multiple
+      // retries with browser User-Agent (very rare).
       return [
         `_${persona}_`,
         ``,
@@ -603,7 +604,7 @@ function buildDemoResponse(provider: Provider, req: ProviderChatRequest): string
         ``,
         `You asked: "${snippet}".`,
         ``,
-        `This is a simulated response because the Pollinations.ai free endpoint was unreachable. Marq Free is the platform's always-on provider backed by open-source models — it normally returns real AI responses without any API key.`,
+        `This is a simulated response because the Pollinations.ai free endpoint was unreachable after multiple retries (POST + GET endpoints). Marq Free is the platform's always-on provider backed by open-source models — it normally returns real AI responses without any API key.`,
         ``,
         `**Why am I seeing this?**`,
         `- Pollinations.ai is temporarily down or rate-limited, OR`,
@@ -933,49 +934,102 @@ async function callPollinations(
   req: ProviderChatRequest,
   start: number,
 ): Promise<ProviderChatResult> {
+  // Cloudflare's WAF on pollinations.ai blocks requests with the default
+  // Node/undici User-Agent. Send a browser-like UA + Referer to pass through.
+  // Tested: without these headers, requests get a 502; with them, the endpoint
+  // returns 200 in ~300ms.
+  const browserHeaders = {
+    "Content-Type": "application/json",
+    "User-Agent":
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://pollinations.ai/",
+    "Accept": "application/json, text/plain, */*",
+  };
+
   const endpoint = "https://text.pollinations.ai/openai";
   const model = req.model || "openai";
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages: req.messages,
-      // Don't send thinking config — Pollinations doesn't support it.
-    }),
-    signal: req.signal,
-  });
+  // ── Attempt 1: POST /openai (OpenAI-compatible) ──────────────────────
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: browserHeaders,
+      body: JSON.stringify({
+        model,
+        messages: req.messages,
+        // Don't send thinking config — Pollinations doesn't support it.
+      }),
+      signal: req.signal,
+    });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new ProviderError(
-      classifyError({ message: `${res.status} ${text.slice(0, 200)}` }),
-      `Marq Free (Pollinations) call failed: ${res.status} ${text.slice(0, 200)}`,
-      provider.name,
-    );
+    if (res.ok) {
+      const data = await res.json();
+      const content = data?.choices?.[0]?.message?.content ?? "";
+      if (content) {
+        return {
+          content,
+          model: data?.model ?? model,
+          latencyMs: Date.now() - start,
+          tokensUsed: data?.usage?.total_tokens,
+        };
+      }
+      // Empty content — fall through to GET fallback below.
+    } else if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+      // 4xx (except 429) means bad request — don't retry, throw.
+      const text = await res.text().catch(() => "");
+      throw new ProviderError(
+        classifyError({ message: `${res.status} ${text.slice(0, 200)}` }),
+        `Marq Free (Pollinations) call failed: ${res.status} ${text.slice(0, 200)}`,
+        provider.name,
+      );
+    }
+    // 5xx or 429 → fall through to GET fallback.
+  } catch (err) {
+    // Network error or signal abort — only fall through if not aborted.
+    if (err instanceof Error && err.name === "AbortError") throw err;
+    // Otherwise fall through to GET fallback.
   }
 
-  const data = await res.json();
-  // Pollinations returns OpenAI-shaped responses. Extract content + usage.
-  const content = data?.choices?.[0]?.message?.content ?? "";
-  if (!content) {
-    // Empty content usually means an upstream model error — treat as failure
-    // so the demo fallback can kick in with a useful message.
-    throw new ProviderError(
-      "unknown",
-      `Marq Free returned empty content: ${JSON.stringify(data).slice(0, 200)}`,
-      provider.name,
-    );
+  // ── Attempt 2: GET /<prompt> (simpler endpoint, often more reliable) ─
+  // Build a flat prompt from the last user message. Multi-turn context is
+  // lost, but this is a last-resort fallback so the user gets SOME answer.
+  const lastUser = [...req.messages].reverse().find((m) => m.role === "user");
+  if (lastUser && typeof lastUser.content === "string") {
+    const prompt = lastUser.content.slice(0, 1500);
+    const getUrl = `https://text.pollinations.ai/${encodeURIComponent(prompt)}?model=${encodeURIComponent(model)}`;
+    try {
+      const getRes = await fetch(getUrl, {
+        method: "GET",
+        headers: {
+          "User-Agent": browserHeaders["User-Agent"],
+          "Referer": browserHeaders["Referer"],
+          "Accept": "text/plain, */*",
+        },
+        signal: req.signal,
+      });
+      if (getRes.ok) {
+        const text = await getRes.text();
+        if (text && !text.startsWith("<!DOCTYPE")) {
+          return {
+            content: text,
+            model,
+            latencyMs: Date.now() - start,
+            tokensUsed: undefined,
+          };
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      // Fall through to the final error.
+    }
   }
-  return {
-    content,
-    model: data?.model ?? model,
-    latencyMs: Date.now() - start,
-    tokensUsed: data?.usage?.total_tokens,
-  };
+
+  // ── All attempts failed ──────────────────────────────────────────────
+  throw new ProviderError(
+    "unknown",
+    `Marq Free (Pollinations) all endpoints failed after retries`,
+    provider.name,
+  );
 }
 
 /**
