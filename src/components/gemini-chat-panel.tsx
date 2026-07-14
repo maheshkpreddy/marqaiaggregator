@@ -1,16 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -29,9 +22,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Textarea as SystemTextarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Toaster } from "@/components/ui/toaster";
 import ReactMarkdown from "react-markdown";
 import {
   Send,
@@ -46,8 +37,19 @@ import {
   Cpu,
   CornerDownLeft,
   XCircle,
-  ArrowLeft,
 } from "lucide-react";
+
+/**
+ * GeminiChatPanel — embedded inside the Marq AI aggregator as a tab.
+ *
+ * Why this lives inside the aggregator:
+ *  - Inherits the aggregator's auth gate (only logged-in users can access)
+ *  - Shares the same layout, theme, toast system, and UI primitives
+ *  - No separate route / no separate auth flow
+ *
+ * The panel calls /api/gemini/* endpoints, which read GEMINI_API_KEY
+ * server-side. The key is never exposed to the browser.
+ */
 
 interface GeminiModel {
   name: string;
@@ -63,7 +65,6 @@ interface ChatMessage {
   streaming?: boolean;
   error?: boolean;
   latencyMs?: number;
-  receivedAt?: number;
 }
 
 const DEFAULT_SYSTEM_INSTRUCTION =
@@ -75,15 +76,11 @@ function formatLatency(ms?: number): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-export default function GeminiChatPage() {
+export function GeminiChatPanel() {
   const { toast } = useToast();
   const [models, setModels] = useState<GeminiModel[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>(
-    "gemini-flash-latest"
-  );
-  const [systemInstruction, setSystemInstruction] = useState<string>(
-    DEFAULT_SYSTEM_INSTRUCTION
-  );
+  const [selectedModel, setSelectedModel] = useState<string>("gemini-flash-latest");
+  const [systemInstruction, setSystemInstruction] = useState<string>(DEFAULT_SYSTEM_INSTRUCTION);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -94,6 +91,7 @@ export default function GeminiChatPage() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // Fetch model list on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -107,7 +105,7 @@ export default function GeminiChatPage() {
           setSelectedModel(data.default ?? data.models[0].name);
         }
       } catch {
-        // silent fail — we have a hardcoded default
+        // silent fail — hardcoded default is used
       }
     })();
     return () => {
@@ -115,13 +113,15 @@ export default function GeminiChatPage() {
     };
   }, []);
 
+  // Auto-grow textarea
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input]);
 
+  // Auto-scroll on new messages
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -156,7 +156,6 @@ export default function GeminiChatPage() {
         id: `u-${Date.now()}`,
         role: "user",
         content,
-        receivedAt: Date.now(),
       };
       const assistantMsg: ChatMessage = {
         id: `m-${Date.now()}`,
@@ -195,9 +194,7 @@ export default function GeminiChatPage() {
           try {
             const errJson = await res.json();
             if (errJson?.error) errText = errJson.error;
-          } catch {
-            // ignore
-          }
+          } catch {}
           throw new Error(errText);
         }
         if (!res.body) throw new Error("No response body");
@@ -258,10 +255,9 @@ export default function GeminiChatPage() {
           });
         }
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Unknown error";
+        const message = err instanceof Error ? err.message : "Unknown error";
         if (err instanceof DOMException && err.name === "AbortError") {
-          // User cancelled
+          // user cancelled — leave partial text
         } else {
           setError(message);
           setMessages((prev) =>
@@ -303,7 +299,7 @@ export default function GeminiChatPage() {
     setError(null);
     toast({
       title: "Conversation cleared",
-      description: "Started a fresh chat.",
+      description: "Started a fresh Gemini chat.",
     });
   };
 
@@ -317,31 +313,21 @@ export default function GeminiChatPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground">
-      {/* Header */}
-      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-40">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              <span className="hidden sm:inline">Back to Aggregator</span>
-            </Link>
-            <span className="text-muted-foreground/40">/</span>
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white shadow-sm">
-                <Sparkles className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="text-sm font-semibold tracking-tight truncate">
-                  Gemini Chat
-                </h1>
-                <p className="text-[11px] text-muted-foreground truncate hidden sm:block">
-                  Powered by Google Gemini · server-side · streaming
-                </p>
-              </div>
+    <div className="flex flex-col h-full bg-background">
+      {/* Toolbar */}
+      <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white shadow-sm shrink-0">
+              <Sparkles className="h-3.5 w-3.5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold tracking-tight truncate">
+                Gemini Chat
+              </h2>
+              <p className="text-[11px] text-muted-foreground truncate hidden sm:block">
+                Direct streaming access to Google Gemini · server-side key
+              </p>
             </div>
           </div>
 
@@ -353,7 +339,7 @@ export default function GeminiChatPage() {
               </Badge>
             )}
             <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger className="h-8 w-[170px] sm:w-[200px] text-xs">
+              <SelectTrigger className="h-8 w-[160px] sm:w-[190px] text-xs">
                 <SelectValue placeholder="Select model" />
               </SelectTrigger>
               <SelectContent>
@@ -365,9 +351,7 @@ export default function GeminiChatPage() {
                   models.map((m) => (
                     <SelectItem key={m.name} value={m.name}>
                       <div className="flex flex-col">
-                        <span className="text-xs font-medium">
-                          {m.displayName}
-                        </span>
+                        <span className="text-xs font-medium">{m.displayName}</span>
                         <span className="text-[10px] text-muted-foreground">
                           {m.contextWindow.toLocaleString()} ctx
                         </span>
@@ -387,18 +371,16 @@ export default function GeminiChatPage() {
               </DialogTrigger>
               <DialogContent className="sm:max-w-[520px]">
                 <DialogHeader>
-                  <DialogTitle>Chat settings</DialogTitle>
+                  <DialogTitle>Gemini chat settings</DialogTitle>
                   <DialogDescription>
-                    Configure the system instruction that shapes the
-                    assistant&apos;s behavior. Saved for this session only.
+                    Configure the system instruction that shapes Gemini&apos;s
+                    behavior. Saved for this session only.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-3 py-2">
                   <div className="grid gap-1.5">
-                    <Label htmlFor="system-instruction">
-                      System instruction
-                    </Label>
-                    <SystemTextarea
+                    <Label htmlFor="system-instruction">System instruction</Label>
+                    <Textarea
                       id="system-instruction"
                       value={systemInstruction}
                       onChange={(e) => setSystemInstruction(e.target.value)}
@@ -412,29 +394,23 @@ export default function GeminiChatPage() {
                     </p>
                   </div>
                   <div className="grid gap-1.5">
-                    <Label>About this deployment</Label>
+                    <Label>About this integration</Label>
                     <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1">
                       <p>
-                        <span className="font-medium text-foreground">
-                          Region:
-                        </span>{" "}
-                        Vercel <code className="font-mono">iad1</code> (US East)
-                        — supported by Gemini API.
+                        <span className="font-medium text-foreground">Region:</span>{" "}
+                        Vercel <code className="font-mono">iad1</code> (US East) —
+                        supported by Gemini API.
                       </p>
                       <p>
-                        <span className="font-medium text-foreground">
-                          Key:
-                        </span>{" "}
-                        Read server-side from <code className="font-mono">
-                          GEMINI_API_KEY
-                        </code>{" "}
-                        env var. Never exposed to the browser.
+                        <span className="font-medium text-foreground">Key:</span>{" "}
+                        Read server-side from{" "}
+                        <code className="font-mono">GEMINI_API_KEY</code> env var.
+                        Never exposed to the browser.
                       </p>
                       <p>
-                        <span className="font-medium text-foreground">
-                          Streaming:
-                        </span>{" "}
-                        Yes — text chunks stream as the model generates.
+                        <span className="font-medium text-foreground">Access:</span>{" "}
+                        Inherits the aggregator&apos;s auth — only logged-in users
+                        can reach this tab.
                       </p>
                     </div>
                   </div>
@@ -442,15 +418,11 @@ export default function GeminiChatPage() {
                 <DialogFooter>
                   <Button
                     variant="outline"
-                    onClick={() =>
-                      setSystemInstruction(DEFAULT_SYSTEM_INSTRUCTION)
-                    }
+                    onClick={() => setSystemInstruction(DEFAULT_SYSTEM_INSTRUCTION)}
                   >
                     Reset
                   </Button>
-                  <Button onClick={() => setSettingsOpen(false)}>
-                    Save & close
-                  </Button>
+                  <Button onClick={() => setSettingsOpen(false)}>Save & close</Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -468,11 +440,9 @@ export default function GeminiChatPage() {
             </Button>
           </div>
         </div>
-      </header>
 
-      {/* Status row */}
-      <div className="border-b bg-muted/30">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 py-2 flex items-center gap-3 text-[11px] text-muted-foreground">
+        {/* Status row */}
+        <div className="px-4 sm:px-6 pb-2 flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
@@ -497,10 +467,10 @@ export default function GeminiChatPage() {
         </div>
       </div>
 
-      {/* Main */}
-      <main className="flex-1 mx-auto w-full max-w-5xl px-4 sm:px-6 py-6 flex flex-col">
+      {/* Chat body */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         {isEmpty ? (
-          <div className="flex-1 flex flex-col items-center justify-center py-12">
+          <div className="flex-1 flex flex-col items-center justify-center p-6 overflow-y-auto">
             <Card className="w-full max-w-2xl border-0 shadow-none sm:border sm:shadow-sm">
               <CardHeader className="text-center space-y-2 pb-2">
                 <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white shadow-md">
@@ -534,18 +504,16 @@ export default function GeminiChatPage() {
         ) : (
           <div
             ref={scrollRef}
-            className="flex-1 min-h-0 overflow-y-auto pr-1 -mr-1 space-y-6"
+            className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6 space-y-6"
           >
             {messages.map((m) => (
               <MessageBubble key={m.id} message={m} />
             ))}
           </div>
         )}
-      </main>
 
-      {/* Composer */}
-      <footer className="border-t bg-background sticky bottom-0">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 py-3">
+        {/* Composer */}
+        <div className="border-t bg-background px-4 sm:px-6 py-3">
           <div className="rounded-xl border bg-card focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all shadow-sm">
             <Textarea
               ref={textareaRef}
@@ -558,7 +526,7 @@ export default function GeminiChatPage() {
                   : "Send a follow-up…"
               }
               rows={1}
-              className="min-h-[52px] max-h-[240px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm"
+              className="min-h-[48px] max-h-[200px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm"
               disabled={isStreaming}
             />
             <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
@@ -597,13 +565,10 @@ export default function GeminiChatPage() {
             </div>
           </div>
           <p className="mt-2 text-[10.5px] text-muted-foreground text-center">
-            Gemini may produce inaccurate information. Verify important
-            outputs.
+            Gemini may produce inaccurate information. Verify important outputs.
           </p>
         </div>
-      </footer>
-
-      <Toaster />
+      </div>
     </div>
   );
 }
@@ -627,14 +592,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       </div>
       <div className="flex-1 min-w-0 space-y-1">
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <span className="font-medium">
-            {isUser ? "You" : "Gemini"}
-          </span>
+          <span className="font-medium">{isUser ? "You" : "Gemini"}</span>
           {message.streaming && (
-            <Badge
-              variant="secondary"
-              className="text-[10px] gap-1 py-0 px-1.5"
-            >
+            <Badge variant="secondary" className="text-[10px] gap-1 py-0 px-1.5">
               <span className="relative flex h-1.5 w-1.5">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75 animate-ping" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-purple-500" />
@@ -643,10 +603,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             </Badge>
           )}
           {!message.streaming && message.latencyMs !== undefined && (
-            <Badge
-              variant="outline"
-              className="text-[10px] gap-1 py-0 px-1.5 font-normal"
-            >
+            <Badge variant="outline" className="text-[10px] gap-1 py-0 px-1.5 font-normal">
               <Clock className="h-2.5 w-2.5" />
               {formatLatency(message.latencyMs)}
             </Badge>
@@ -663,9 +620,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           }`}
         >
           {isUser ? (
-            <p className="my-0 whitespace-pre-wrap leading-relaxed">
-              {message.content}
-            </p>
+            <p className="my-0 whitespace-pre-wrap leading-relaxed">{message.content}</p>
           ) : message.content.length === 0 && message.streaming ? (
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
               <span className="inline-flex gap-1">

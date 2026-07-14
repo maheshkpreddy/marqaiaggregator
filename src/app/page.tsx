@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -89,6 +88,7 @@ import { UnifiedAiPanel } from "@/components/unified-ai-panel";
 import { AIAnalyticsDashboard } from "@/components/ai-analytics-dashboard";
 import { DocumentationPanel } from "@/components/documentation-panel";
 import { DashboardPanel, type Role as DashboardRole } from "@/components/dashboard-panel";
+import { GeminiChatPanel } from "@/components/gemini-chat-panel";
 
 // ---------- Auth types ----------
 interface AuthUser {
@@ -332,7 +332,7 @@ export default function Home() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"dashboard" | "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "unified-ai" | "analytics" | "docs">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "unified-ai" | "analytics" | "docs" | "gemini">("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -659,6 +659,7 @@ export default function Home() {
     prompts: { group: "Build", label: "Prompts" },
     directory: { group: "Discover", label: "AI Directory" },
     "unified-ai": { group: "Discover", label: "Unified AI" },
+    gemini: { group: "Discover", label: "Gemini Chat" },
     guide: { group: "Discover", label: "Guide" },
     providers: { group: "Settings", label: "AI Providers" },
     health: { group: "Settings", label: "Health" },
@@ -686,16 +687,7 @@ export default function Home() {
       <NavGroup label="Discover">
         <NavItem icon={Network} label="AI Directory" active={tab === "directory"} onClick={() => { setTab("directory"); setMobileNavOpen(false); }} />
         <NavItem icon={ServerCog} label="Unified AI" active={tab === "unified-ai"} onClick={() => { setTab("unified-ai"); setMobileNavOpen(false); }} />
-        <Link
-          href="/gemini"
-          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-sm font-medium transition-all group text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70 hover:text-slate-900 dark:hover:text-white border border-transparent"
-        >
-          <Sparkles className="w-4 h-4 shrink-0 text-purple-500 dark:text-purple-400 group-hover:text-purple-600 dark:group-hover:text-purple-300" strokeWidth={2.2} />
-          <span className="truncate">Gemini Chat</span>
-          <span className="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300">
-            NEW
-          </span>
-        </Link>
+        <NavItem icon={Sparkles} label="Gemini Chat" active={tab === "gemini"} onClick={() => { setTab("gemini"); setMobileNavOpen(false); }} />
         <NavItem icon={BookOpen} label="Guide" active={tab === "guide"} onClick={() => { setTab("guide"); setMobileNavOpen(false); }} />
       </NavGroup>
 
@@ -1175,6 +1167,11 @@ export default function Home() {
           {/* DOCS TAB — in-product technical, functional, and SOP documentation */}
           <TabsContent value="docs" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
             <DocumentationPanel />
+          </TabsContent>
+
+          {/* GEMINI CHAT TAB — direct streaming access to Google Gemini */}
+          <TabsContent value="gemini" className="flex-1 m-0 data-[state=inactive]:hidden">
+            <GeminiChatPanel />
           </TabsContent>
         </Tabs>
       </main>
