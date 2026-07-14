@@ -204,11 +204,38 @@ export function GeminiChatPanel() {
         let acc = "";
         let sawErrorSentinel = false;
         let errMsg = "";
+        let failoverNotice: string | null = null;
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           acc += decoder.decode(value, { stream: true });
+
+          // Detect failover info sentinel (server fell back to alternate model).
+          const infoSentinel = "[STREAM_INFO]";
+          const infoIdx = acc.indexOf(infoSentinel);
+          if (infoIdx >= 0) {
+            // Find the end of the info line (terminator: \n\n).
+            const afterInfo = acc.slice(infoIdx + infoSentinel.length);
+            const endMatch = afterInfo.indexOf("\n\n");
+            const infoText =
+              endMatch >= 0
+                ? afterInfo.slice(0, endMatch).trim()
+                : afterInfo.trim();
+            failoverNotice = infoText;
+            // Strip the sentinel + its line from the visible text.
+            const stripEnd =
+              endMatch >= 0
+                ? infoIdx + infoSentinel.length + endMatch + 2
+                : acc.length;
+            acc = acc.slice(0, infoIdx) + acc.slice(stripEnd);
+            if (failoverNotice) {
+              toast({
+                title: "Switched model",
+                description: failoverNotice,
+              });
+            }
+          }
 
           const sentinel = "[STREAM_ERROR]";
           const idx = acc.lastIndexOf(sentinel);
