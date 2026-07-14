@@ -1336,7 +1336,7 @@ function personaFor(name: string): string {
 export function defaultModelFor(providerName: string): string {
   switch (providerName) {
     case "openai": return "gpt-4o-mini";
-    case "gemini": return "gemini-2.5-flash";
+    case "gemini": return "gemini-flash-latest";
     case "claude": return "claude-3-5-sonnet";
     case "grok": return "grok-2";
     case "huggingface": return "meta-llama/Llama-3.1-8B-Instruct";

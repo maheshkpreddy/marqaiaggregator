@@ -392,10 +392,10 @@ async function main() {
     {
       name: "gemini",
       displayName: "Google Gemini",
-      description: "Gemini 2.5 Flash, Gemini 2.5 Pro. Long-context multimodal reasoning, strong at grounded factual answers and code. Generous free tier: 15 RPM, 1500 requests/day — no credit card required. Set GEMINI_API_KEY env var to activate.",
+      description: "Google Gemini — uses the gemini-flash-latest alias which auto-points to the current GA Flash model (no more 'model deprecated' errors). Long-context multimodal reasoning, strong at grounded factual answers and code. Generous free tier: 15 RPM, 1500 requests/day — no credit card required. Set GEMINI_API_KEY env var to activate.",
       apiEndpoint: "https://generativelanguage.googleapis.com/v1beta/models",
       apiKey: null,
-      models: JSON.stringify(["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash-lite"]),
+      models: JSON.stringify(["gemini-flash-latest", "gemini-pro-latest"]),
       active: true,
       priority: 28,
       color: "#4285f4",
