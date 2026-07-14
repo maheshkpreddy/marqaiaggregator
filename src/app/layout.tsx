@@ -14,24 +14,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Marq AI — Unified AI Aggregator Platform",
+  title: "Gemini Chat — Streaming Next.js demo",
   description:
-    "Marq AI aggregates OpenAI, Google Gemini, and Anthropic Claude into one unified workspace with automatic failover. Your reliable backup plan for any AI-powered application.",
+    "A streaming chat UI built on Next.js 16 and the Google Gemini API. API key stays server-side; runs on Vercel iad1.",
   keywords: [
-    "Marq AI",
-    "AI aggregator",
-    "unified AI gateway",
-    "OpenAI",
     "Gemini",
-    "Claude",
-    "failover",
-    "multi-model",
+    "Google AI",
+    "Next.js",
+    "streaming chat",
+    "Vercel",
+    "App Router",
   ],
-  authors: [{ name: "Marq AI" }],
+  authors: [{ name: "Gemini Chat" }],
   openGraph: {
-    title: "Marq AI — Unified AI Aggregator Platform",
-    description: "One workspace. Every model. Automatic failover.",
-    siteName: "Marq AI",
+    title: "Gemini Chat — Streaming Next.js demo",
+    description: "Server-side key. Streaming responses. Vercel-ready.",
+    siteName: "Gemini Chat",
     type: "website",
   },
 };

@@ -13,6 +13,9 @@
     },
     "src/app/api/v1/chat/completions/route.ts": {
       "maxDuration": 30
+    },
+    "src/app/api/gemini/chat/route.ts": {
+      "maxDuration": 60
     }
   },
   "env": {
