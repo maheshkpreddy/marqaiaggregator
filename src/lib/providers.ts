@@ -980,7 +980,7 @@ async function callPollinations(
   // hitting Vercel's function timeout so the caller (failover engine)
   // still has time to record the failure and synthesize a demo fallback
   // response.
-  const HARD_BUDGET_MS = 22000;
+  const HARD_BUDGET_MS = 14000;
 
   type Attempt = {
     ua: string;
@@ -991,43 +991,43 @@ async function callPollinations(
   };
 
   const attempts: Attempt[] = [
-    // Attempt 1: POST with Chrome-Linux UA + openai model. Generous 12s
-    // timeout — handles 95% of real-world prompts including reasoning.
+    // Attempt 1: POST with Chrome-Linux UA + openai model. 8s timeout
+    // — handles most real-world prompts. Reduced from 12s to leave room
+    // for the demo fallback within Vercel's 30s function limit.
     {
       ua: USER_AGENTS[0],
       model: PRIMARY_MODEL,
       method: "POST",
-      timeoutMs: 12000,
+      timeoutMs: 8000,
       delayBeforeMs: 0,
     },
     // Attempt 2: POST with Safari-Mac UA + openai model. Different UA in
-    // case Cloudflare is fingerprinting the Linux Chrome UA. 8s timeout.
+    // case Cloudflare is fingerprinting the Linux Chrome UA. 6s timeout.
     {
       ua: USER_AGENTS[1],
       model: PRIMARY_MODEL,
       method: "POST",
-      timeoutMs: 8000,
-      delayBeforeMs: 400,
+      timeoutMs: 6000,
+      delayBeforeMs: 300,
     },
     // Attempt 3: POST with Chrome-Windows UA + openai model. Third UA
-    // option. 8s timeout.
+    // option. 5s timeout.
     {
       ua: USER_AGENTS[2],
       model: PRIMARY_MODEL,
       method: "POST",
-      timeoutMs: 8000,
-      delayBeforeMs: 600,
+      timeoutMs: 5000,
+      delayBeforeMs: 400,
     },
     // Attempt 4: GET fallback with explicit gpt-oss-20b model. Different
     // endpoint shape (plain GET, no JSON body) sometimes bypasses WAF
-    // rules that block POSTs. 6s timeout — if we got here, the prompt
-    // is probably short enough for GET to handle.
+    // rules that block POSTs. 4s timeout.
     {
       ua: USER_AGENTS[0],
       model: FALLBACK_MODEL,
       method: "GET",
-      timeoutMs: 6000,
-      delayBeforeMs: 800,
+      timeoutMs: 4000,
+      delayBeforeMs: 500,
     },
   ];
 

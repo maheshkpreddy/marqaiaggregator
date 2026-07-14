@@ -3,7 +3,7 @@
   "framework": "nextjs",
   "buildCommand": "bash ./vercel-build.sh",
   "installCommand": "npm install --legacy-peer-deps",
-  "regions": ["bom1"],
+  "regions": ["iad1"],
   "functions": {
     "src/app/api/chat/route.ts": {
       "maxDuration": 30
