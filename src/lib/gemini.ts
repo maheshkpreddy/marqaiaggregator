@@ -261,6 +261,8 @@ export async function* streamGemini(
         let inlineErrorMessage: string | null = null;
         let rawChunkCount = 0;
         let rawFirstChunkPreview = "";
+        let rawEventCount = 0;
+        let rawEventSample = "(none)";
 
         // Process a single SSE event. Returns true if processing should
         // continue, false if an inline error was thrown (caller should
@@ -270,6 +272,11 @@ export async function* streamGemini(
           if (!line.startsWith("data:")) return;
           const payload = line.slice(5).trim();
           if (!payload || payload === "[DONE]") return;
+
+          rawEventCount++;
+          if (rawEventCount === 1) {
+            rawEventSample = JSON.stringify(line.slice(0, 80));
+          }
 
           let json: any;
           try {
@@ -342,9 +349,6 @@ export async function* streamGemini(
 
             for (const evt of events) {
               processEvent(evt);
-              // If processEvent threw an inline error, re-throw to outer
-              // catch (which handles retries / failover).
-              // (processEvent throws directly — no special handling needed here.)
             }
 
             // Yield any text accumulated by processEvent.
@@ -371,7 +375,10 @@ export async function* streamGemini(
           } else if (finishReason) {
             reason = `Gemini stopped early (finishReason: ${finishReason}). Try rephrasing or shortening your message.`;
           } else {
-            reason += ` — no text was generated (received ${rawChunkCount} chunks; first: ${JSON.stringify(rawFirstChunkPreview)}). Try rephrasing your message or switching models.`;
+            // Include diagnostic info: chunk count, first chunk preview,
+            // AND whether the buffer split produced any events. This helps
+            // debug SSE parsing issues (e.g. wrong separator).
+            reason += ` — no text was generated (received ${rawChunkCount} chunks; first: ${JSON.stringify(rawFirstChunkPreview)}; buffer was split into ${rawEventCount} events, ${rawEventSample}). Try rephrasing your message or switching models.`;
           }
           const emptyErr: GeminiError = new Error(reason);
           emptyErr.transient = false;
