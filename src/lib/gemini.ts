@@ -262,10 +262,73 @@ export async function* streamGemini(
         let rawChunkCount = 0;
         let rawFirstChunkPreview = "";
 
+        // Process a single SSE event. Returns true if processing should
+        // continue, false if an inline error was thrown (caller should
+        // re-throw to outer retry loop).
+        const processEvent = (evt: string): void => {
+          const line = evt.trim();
+          if (!line.startsWith("data:")) return;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === "[DONE]") return;
+
+          let json: any;
+          try {
+            json = JSON.parse(payload);
+          } catch {
+            // partial JSON — ignore, will be retried with more data
+            return;
+          }
+
+          // Check for inline error (Gemini sometimes returns errors inside SSE).
+          if (json?.error?.message) {
+            inlineErrorMessage = json.error.message as string;
+            const code = (json.error.code ?? 503) as number;
+            const inlineErr: GeminiError = new Error(inlineErrorMessage);
+            inlineErr.status = code;
+            inlineErr.transient = isTransientError(code, inlineErrorMessage);
+            throw inlineErr;
+          }
+
+          // Capture block / finish reasons.
+          if (json?.promptFeedback?.blockReason) {
+            blockReason = json.promptFeedback.blockReason as string;
+          }
+          const candidate = json?.candidates?.[0];
+          if (candidate?.finishReason && candidate.finishReason !== "STOP") {
+            finishReason = candidate.finishReason as string;
+          }
+
+          const parts = candidate?.content?.parts;
+          if (Array.isArray(parts)) {
+            for (const p of parts) {
+              if (typeof p?.text === "string" && p.text.length > 0) {
+                yieldedAny = true;
+                // We can't yield from a nested function in a generator.
+                // Push to a queue and yield from the outer loop.
+                pendingText.push(p.text);
+              }
+            }
+          }
+        };
+
+        const pendingText: string[] = [];
+
         try {
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              // Process any remaining data in the buffer when stream ends.
+              // Gemini sometimes terminates without a final \n\n separator,
+              // so the last SSE event would otherwise be dropped.
+              if (buffer.trim().length > 0) {
+                const remainingEvents = buffer.split("\n\n");
+                for (const evt of remainingEvents) {
+                  processEvent(evt);
+                }
+                buffer = "";
+              }
+              break;
+            }
             const rawChunk = decoder.decode(value, { stream: true });
             if (rawChunkCount === 0) {
               rawFirstChunkPreview = rawChunk.slice(0, 300);
@@ -278,50 +341,20 @@ export async function* streamGemini(
             buffer = events.pop() ?? ""; // keep the (possibly partial) tail
 
             for (const evt of events) {
-              const line = evt.trim();
-              if (!line.startsWith("data:")) continue;
-              const payload = line.slice(5).trim();
-              if (!payload || payload === "[DONE]") continue;
-
-              let json: any;
-              try {
-                json = JSON.parse(payload);
-              } catch {
-                // partial JSON — ignore, will be retried with more data
-                continue;
-              }
-
-              // Check for inline error (Gemini sometimes returns errors inside SSE).
-              if (json?.error?.message) {
-                inlineErrorMessage = json.error.message as string;
-                const code = (json.error.code ?? 503) as number;
-                const inlineErr: GeminiError = new Error(inlineErrorMessage);
-                inlineErr.status = code;
-                inlineErr.transient = isTransientError(code, inlineErrorMessage);
-                throw inlineErr;
-              }
-
-              // Capture block / finish reasons — if Gemini blocks the response
-              // (safety filter, recitation, etc.), the stream will end with
-              // no text content. We need to surface a clear error in that case.
-              if (json?.promptFeedback?.blockReason) {
-                blockReason = json.promptFeedback.blockReason as string;
-              }
-              const candidate = json?.candidates?.[0];
-              if (candidate?.finishReason && candidate.finishReason !== "STOP") {
-                finishReason = candidate.finishReason as string;
-              }
-
-              const parts = candidate?.content?.parts;
-              if (Array.isArray(parts)) {
-                for (const p of parts) {
-                  if (typeof p?.text === "string" && p.text.length > 0) {
-                    yieldedAny = true;
-                    yield p.text;
-                  }
-                }
-              }
+              processEvent(evt);
+              // If processEvent threw an inline error, re-throw to outer
+              // catch (which handles retries / failover).
+              // (processEvent throws directly — no special handling needed here.)
             }
+
+            // Yield any text accumulated by processEvent.
+            while (pendingText.length > 0) {
+              yield pendingText.shift()!;
+            }
+          }
+          // Yield any final pending text.
+          while (pendingText.length > 0) {
+            yield pendingText.shift()!;
           }
         } finally {
           reader.releaseLock();
