@@ -259,30 +259,17 @@ export async function* streamGemini(
         let blockReason: string | null = null;
         let finishReason: string | null = null;
         let inlineErrorMessage: string | null = null;
-        let rawChunkCount = 0;
-        let rawFirstChunkPreview = "";
-        let rawEventCount = 0;
-        let rawEventSample = "(none)";
-        let rawEventParseError: string | null = null;
-        let rawFirstEventDiag = "(none)";
 
-        // Process a single SSE 'data:' line. Throws on inline error.
+        // Process a single SSE 'data:' payload. Throws on inline error.
         const processDataLine = (payload: string): void => {
           const trimmed = payload.trim();
           if (!trimmed || trimmed === "[DONE]") return;
 
-          rawEventCount++;
-          if (rawEventCount === 1) {
-            rawEventSample = JSON.stringify(trimmed.slice(0, 80));
-          }
-
           let json: any;
           try {
             json = JSON.parse(trimmed);
-          } catch (parseErr) {
-            if (rawEventParseError === null) {
-              rawEventParseError = `JSON.parse failed: ${(parseErr as Error).message}; payload length=${trimmed.length}; payload preview=${JSON.stringify(trimmed.slice(0, 100))}`;
-            }
+          } catch {
+            // partial JSON — ignore, will be retried with more data
             return;
           }
 
@@ -306,9 +293,6 @@ export async function* streamGemini(
           }
 
           const parts = candidate?.content?.parts;
-          if (rawEventCount === 1) {
-            rawFirstEventDiag = `partsType=${Array.isArray(parts) ? "array[" + parts.length + "]" : typeof parts}; finishReason=${candidate?.finishReason ?? "(none)"}`;
-          }
           if (Array.isArray(parts)) {
             for (const p of parts) {
               if (typeof p?.text === "string" && p.text.length > 0) {
@@ -317,6 +301,22 @@ export async function* streamGemini(
               }
             }
           }
+        };
+
+        // Process a complete SSE event block (one or more 'data:' lines).
+        // Per SSE spec, multiple consecutive 'data:' lines concatenate into
+        // a single event payload joined by \n.
+        const processSseEvent = (evt: string): void => {
+          const lines = evt.split("\n");
+          const dataLines: string[] = [];
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data:")) {
+              dataLines.push(trimmed.slice(5).trim());
+            }
+          }
+          if (dataLines.length === 0) return;
+          processDataLine(dataLines.join("\n"));
         };
 
         // Process a chunk of SSE text. SSE events look like:
@@ -340,22 +340,6 @@ export async function* streamGemini(
           }
         };
 
-        // Process a complete SSE event block (one or more 'data:' lines).
-        // Per SSE spec, multiple consecutive 'data:' lines concatenate into
-        // a single event payload joined by \n.
-        const processSseEvent = (evt: string): void => {
-          const lines = evt.split("\n");
-          const dataLines: string[] = [];
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith("data:")) {
-              dataLines.push(trimmed.slice(5).trim());
-            }
-          }
-          if (dataLines.length === 0) return;
-          processDataLine(dataLines.join("\n"));
-        };
-
         const pendingText: string[] = [];
 
         try {
@@ -370,10 +354,6 @@ export async function* streamGemini(
               break;
             }
             const rawChunk = decoder.decode(value, { stream: true });
-            if (rawChunkCount === 0) {
-              rawFirstChunkPreview = rawChunk.slice(0, 300);
-            }
-            rawChunkCount++;
             processBufferChunk(rawChunk);
 
             // Yield any text accumulated by processDataLine.
@@ -400,10 +380,7 @@ export async function* streamGemini(
           } else if (finishReason) {
             reason = `Gemini stopped early (finishReason: ${finishReason}). Try rephrasing or shortening your message.`;
           } else {
-            // Include diagnostic info: chunk count, first chunk preview,
-            // AND whether the buffer split produced any events. This helps
-            // debug SSE parsing issues (e.g. wrong separator).
-            reason += ` — no text was generated (chunks=${rawChunkCount}; events=${rawEventCount}; parseError=${rawEventParseError ?? "(none)"}; firstEvent=${rawFirstEventDiag}; sample=${rawEventSample}). Try rephrasing your message or switching models.`;
+            reason += " — no text was generated. Try rephrasing your message or switching models.";
           }
           const emptyErr: GeminiError = new Error(reason);
           emptyErr.transient = false;
