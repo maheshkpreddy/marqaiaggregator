@@ -259,12 +259,19 @@ export async function* streamGemini(
         let blockReason: string | null = null;
         let finishReason: string | null = null;
         let inlineErrorMessage: string | null = null;
+        let rawChunkCount = 0;
+        let rawFirstChunkPreview = "";
 
         try {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            buffer += decoder.decode(value, { stream: true });
+            const rawChunk = decoder.decode(value, { stream: true });
+            if (rawChunkCount === 0) {
+              rawFirstChunkPreview = rawChunk.slice(0, 300);
+            }
+            rawChunkCount++;
+            buffer += rawChunk;
 
             // SSE events are separated by double newlines.
             const events = buffer.split("\n\n");
@@ -331,7 +338,7 @@ export async function* streamGemini(
           } else if (finishReason) {
             reason = `Gemini stopped early (finishReason: ${finishReason}). Try rephrasing or shortening your message.`;
           } else {
-            reason += " — no text was generated. Try rephrasing your message or switching models.";
+            reason += ` — no text was generated (received ${rawChunkCount} chunks; first: ${JSON.stringify(rawFirstChunkPreview)}). Try rephrasing your message or switching models.`;
           }
           const emptyErr: GeminiError = new Error(reason);
           emptyErr.transient = false;
