@@ -215,7 +215,6 @@ export function GeminiChatPanel() {
           const infoSentinel = "[STREAM_INFO]";
           const infoIdx = acc.indexOf(infoSentinel);
           if (infoIdx >= 0) {
-            // Find the end of the info line (terminator: \n\n).
             const afterInfo = acc.slice(infoIdx + infoSentinel.length);
             const endMatch = afterInfo.indexOf("\n\n");
             const infoText =
@@ -223,7 +222,6 @@ export function GeminiChatPanel() {
                 ? afterInfo.slice(0, endMatch).trim()
                 : afterInfo.trim();
             failoverNotice = infoText;
-            // Strip the sentinel + its line from the visible text.
             const stripEnd =
               endMatch >= 0
                 ? infoIdx + infoSentinel.length + endMatch + 2
@@ -247,15 +245,26 @@ export function GeminiChatPanel() {
             break;
           }
 
+          // Live-update the visible text. Trim leading whitespace so the
+          // heartbeat byte doesn't show up as a stray space at the start.
+          const visibleAcc = acc.replace(/^\s+/, "");
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantMsg.id ? { ...m, content: acc } : m
+              m.id === assistantMsg.id ? { ...m, content: visibleAcc } : m
             )
           );
         }
 
         const latencyMs = Math.round(performance.now() - startTs);
         const trimmedAcc = acc.trim();
+
+        // If stream ended with no content AND no error sentinel, treat as a
+        // server-side issue (e.g. Vercel function restart, network drop).
+        if (!sawErrorSentinel && trimmedAcc.length === 0) {
+          errMsg =
+            "The server closed the connection without sending a response. This is usually a transient Vercel function issue — please try again in a few seconds.";
+          setError(errMsg);
+        }
 
         setMessages((prev) =>
           prev.map((m) =>
@@ -264,20 +273,20 @@ export function GeminiChatPanel() {
                   ...m,
                   content:
                     trimmedAcc.length > 0
-                      ? acc
+                      ? acc.replace(/^\s+/, "")
                       : `**Request failed.**\n\n\`${errMsg || "Unknown error"}\``,
                   streaming: false,
-                  error: sawErrorSentinel,
+                  error: sawErrorSentinel || trimmedAcc.length === 0,
                   latencyMs,
                 }
               : m
           )
         );
 
-        if (sawErrorSentinel) {
+        if (sawErrorSentinel || trimmedAcc.length === 0) {
           toast({
             title: "Generation interrupted",
-            description: "The model returned an error mid-stream.",
+            description: errMsg || "The model returned an error mid-stream.",
             variant: "destructive",
           });
         }

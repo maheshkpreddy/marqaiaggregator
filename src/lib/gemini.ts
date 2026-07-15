@@ -250,17 +250,15 @@ export async function* streamGemini(
         }
 
         // Stream is open. Notify caller which model is serving.
-        if (attemptModel !== model) {
-          // We're on the failover model — let the caller know so they can
-          // surface a "fell back to X" note in the UI.
-          onModelUsed?.(attemptModel);
-        } else {
-          onModelUsed?.(attemptModel);
-        }
+        onModelUsed?.(attemptModel);
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let yieldedAny = false;
+        let blockReason: string | null = null;
+        let finishReason: string | null = null;
+        let inlineErrorMessage: string | null = null;
 
         try {
           while (true) {
@@ -278,39 +276,66 @@ export async function* streamGemini(
               const payload = line.slice(5).trim();
               if (!payload || payload === "[DONE]") continue;
 
+              let json: any;
               try {
-                const json = JSON.parse(payload);
-                // Check for inline error (Gemini sometimes returns errors inside SSE).
-                if (json?.error?.message) {
-                  const inlineErr: GeminiError = new Error(json.error.message);
-                  inlineErr.transient = isTransientError(
-                    json.error.code ?? 503,
-                    json.error.message
-                  );
-                  if (inlineErr.transient) {
-                    throw inlineErr;
+                json = JSON.parse(payload);
+              } catch {
+                // partial JSON — ignore, will be retried with more data
+                continue;
+              }
+
+              // Check for inline error (Gemini sometimes returns errors inside SSE).
+              if (json?.error?.message) {
+                inlineErrorMessage = json.error.message as string;
+                const code = (json.error.code ?? 503) as number;
+                const inlineErr: GeminiError = new Error(inlineErrorMessage);
+                inlineErr.status = code;
+                inlineErr.transient = isTransientError(code, inlineErrorMessage);
+                throw inlineErr;
+              }
+
+              // Capture block / finish reasons — if Gemini blocks the response
+              // (safety filter, recitation, etc.), the stream will end with
+              // no text content. We need to surface a clear error in that case.
+              if (json?.promptFeedback?.blockReason) {
+                blockReason = json.promptFeedback.blockReason as string;
+              }
+              const candidate = json?.candidates?.[0];
+              if (candidate?.finishReason && candidate.finishReason !== "STOP") {
+                finishReason = candidate.finishReason as string;
+              }
+
+              const parts = candidate?.content?.parts;
+              if (Array.isArray(parts)) {
+                for (const p of parts) {
+                  if (typeof p?.text === "string" && p.text.length > 0) {
+                    yieldedAny = true;
+                    yield p.text;
                   }
-                  throw inlineErr;
                 }
-                const parts = json?.candidates?.[0]?.content?.parts;
-                if (Array.isArray(parts)) {
-                  for (const p of parts) {
-                    if (typeof p?.text === "string" && p.text.length > 0) {
-                      yield p.text;
-                    }
-                  }
-                }
-              } catch (parseErr) {
-                // If it's a thrown GeminiError, re-throw to outer retry loop.
-                if (parseErr instanceof Error && (parseErr as GeminiError).transient !== undefined) {
-                  throw parseErr;
-                }
-                // Otherwise partial JSON — ignore, will be retried with more data.
               }
             }
           }
         } finally {
           reader.releaseLock();
+        }
+
+        // If we got nothing and there's a block/finish reason, throw a clear
+        // error so the route surfaces it instead of an empty stream.
+        if (!yieldedAny) {
+          let reason = "Gemini returned an empty response";
+          if (inlineErrorMessage) {
+            reason = inlineErrorMessage;
+          } else if (blockReason) {
+            reason = `Gemini blocked the response (promptFeedback.blockReason: ${blockReason}). Try rephrasing your message.`;
+          } else if (finishReason) {
+            reason = `Gemini stopped early (finishReason: ${finishReason}). Try rephrasing or shortening your message.`;
+          } else {
+            reason += " — no text was generated. Try rephrasing your message or switching models.";
+          }
+          const emptyErr: GeminiError = new Error(reason);
+          emptyErr.transient = false;
+          throw emptyErr;
         }
 
         success = true;
@@ -322,7 +347,8 @@ export async function* streamGemini(
         lastErr = err instanceof Error ? err : new Error(String(err));
         const transient = (lastErr as GeminiError).transient ?? false;
         if (!transient) {
-          // Non-transient (e.g. 400 bad request, invalid API key) — bubble up.
+          // Non-transient (e.g. 400 bad request, invalid API key, safety block)
+          // — bubble up.
           throw lastErr;
         }
         attempt++;

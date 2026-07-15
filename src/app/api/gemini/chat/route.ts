@@ -125,6 +125,14 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       let usedModel = model;
       let infoSent = false;
+      let firstByteSent = false;
+
+      // Send a single heartbeat byte immediately so Vercel does NOT
+      // 304/short-circuit the response as "empty body" while we wait
+      // for Gemini's first chunk. The client strips leading whitespace.
+      controller.enqueue(encoder.encode(" "));
+      firstByteSent = true;
+
       try {
         for await (const chunk of streamGemini(
           model,
@@ -150,13 +158,12 @@ export async function POST(req: NextRequest) {
         }
         controller.close();
       } catch (err) {
-        const message =
+        let message =
           err instanceof Error ? err.message : "Unknown streaming error";
 
         // If the error is a known "high demand" message, give the user a
         // friendlier explanation with a hint to retry or switch models.
         const lower = message.toLowerCase();
-        let friendly = message;
         if (
           lower.includes("high demand") ||
           lower.includes("overloaded") ||
@@ -164,13 +171,20 @@ export async function POST(req: NextRequest) {
           lower.includes("capacity") ||
           lower.includes("unavailable")
         ) {
-          friendly =
+          message =
             "Gemini is currently overloaded on this model. I retried with backoff and tried the alternate model, but all attempts failed. Please try again in a minute — these spikes are usually very short.";
+        }
+
+        // Always ensure firstByteSent so Vercel treats this as a streaming
+        // response (we already enqueued a heartbeat above).
+        if (!firstByteSent) {
+          controller.enqueue(encoder.encode(" "));
+          firstByteSent = true;
         }
 
         // Send a final error sentinel that the client can detect.
         controller.enqueue(
-          encoder.encode(`\n\n[STREAM_ERROR] ${friendly}`)
+          encoder.encode(`\n\n[STREAM_ERROR] ${message}`)
         );
         controller.close();
       }
