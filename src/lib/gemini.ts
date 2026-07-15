@@ -266,28 +266,23 @@ export async function* streamGemini(
         let rawEventParseError: string | null = null;
         let rawFirstEventDiag = "(none)";
 
-        // Process a single SSE event. Returns true if processing should
-        // continue, false if an inline error was thrown (caller should
-        // re-throw to outer retry loop).
-        const processEvent = (evt: string): void => {
-          const line = evt.trim();
-          if (!line.startsWith("data:")) return;
-          const payload = line.slice(5).trim();
-          if (!payload || payload === "[DONE]") return;
+        // Process a single SSE 'data:' line. Throws on inline error.
+        const processDataLine = (payload: string): void => {
+          const trimmed = payload.trim();
+          if (!trimmed || trimmed === "[DONE]") return;
 
           rawEventCount++;
           if (rawEventCount === 1) {
-            rawEventSample = JSON.stringify(line.slice(0, 80));
+            rawEventSample = JSON.stringify(trimmed.slice(0, 80));
           }
 
           let json: any;
           try {
-            json = JSON.parse(payload);
+            json = JSON.parse(trimmed);
           } catch (parseErr) {
             if (rawEventParseError === null) {
-              rawEventParseError = `JSON.parse failed: ${(parseErr as Error).message}; payload length=${payload.length}; payload preview=${JSON.stringify(payload.slice(0, 100))}`;
+              rawEventParseError = `JSON.parse failed: ${(parseErr as Error).message}; payload length=${trimmed.length}; payload preview=${JSON.stringify(trimmed.slice(0, 100))}`;
             }
-            // partial JSON — ignore, will be retried with more data
             return;
           }
 
@@ -312,7 +307,7 @@ export async function* streamGemini(
 
           const parts = candidate?.content?.parts;
           if (rawEventCount === 1) {
-            rawFirstEventDiag = `candidate=${JSON.stringify(candidate?.slice?.(0, 80) ?? candidate)}; partsType=${Array.isArray(parts) ? "array[" + parts.length + "]" : typeof parts}; finishReason=${candidate?.finishReason ?? "(none)"}`;
+            rawFirstEventDiag = `partsType=${Array.isArray(parts) ? "array[" + parts.length + "]" : typeof parts}; finishReason=${candidate?.finishReason ?? "(none)"}`;
           }
           if (Array.isArray(parts)) {
             for (const p of parts) {
@@ -324,6 +319,43 @@ export async function* streamGemini(
           }
         };
 
+        // Process a chunk of SSE text. SSE events look like:
+        //   data: {json}\r\n\r\n   (CRLF separators — the SSE spec)
+        //   data: {json}\n\n       (LF-only — common in practice)
+        //
+        // A single event's data can also span multiple 'data:' lines if the
+        // JSON is pretty-printed; per SSE spec those concatenate with \n.
+        // We normalize CRLF → LF, split by \n\n, and concatenate consecutive
+        // 'data:' lines within each event.
+        const processBufferChunk = (chunk: string): void => {
+          buffer += chunk;
+          // Normalize CRLF to LF so \n\n splitting works for both formats.
+          buffer = buffer.replace(/\r\n/g, "\n");
+
+          const events = buffer.split("\n\n");
+          buffer = events.pop() ?? ""; // keep the (possibly partial) tail
+
+          for (const evt of events) {
+            processSseEvent(evt);
+          }
+        };
+
+        // Process a complete SSE event block (one or more 'data:' lines).
+        // Per SSE spec, multiple consecutive 'data:' lines concatenate into
+        // a single event payload joined by \n.
+        const processSseEvent = (evt: string): void => {
+          const lines = evt.split("\n");
+          const dataLines: string[] = [];
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data:")) {
+              dataLines.push(trimmed.slice(5).trim());
+            }
+          }
+          if (dataLines.length === 0) return;
+          processDataLine(dataLines.join("\n"));
+        };
+
         const pendingText: string[] = [];
 
         try {
@@ -331,13 +363,8 @@ export async function* streamGemini(
             const { done, value } = await reader.read();
             if (done) {
               // Process any remaining data in the buffer when stream ends.
-              // Gemini sometimes terminates without a final \n\n separator,
-              // so the last SSE event would otherwise be dropped.
               if (buffer.trim().length > 0) {
-                const remainingEvents = buffer.split("\n\n");
-                for (const evt of remainingEvents) {
-                  processEvent(evt);
-                }
+                processSseEvent(buffer);
                 buffer = "";
               }
               break;
@@ -347,17 +374,9 @@ export async function* streamGemini(
               rawFirstChunkPreview = rawChunk.slice(0, 300);
             }
             rawChunkCount++;
-            buffer += rawChunk;
+            processBufferChunk(rawChunk);
 
-            // SSE events are separated by double newlines.
-            const events = buffer.split("\n\n");
-            buffer = events.pop() ?? ""; // keep the (possibly partial) tail
-
-            for (const evt of events) {
-              processEvent(evt);
-            }
-
-            // Yield any text accumulated by processEvent.
+            // Yield any text accumulated by processDataLine.
             while (pendingText.length > 0) {
               yield pendingText.shift()!;
             }
