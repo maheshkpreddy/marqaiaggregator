@@ -1015,8 +1015,9 @@ export default function Home() {
                               e.stopPropagation();
                               deleteSession(s.id);
                             }}
-                            className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-all p-1"
+                            className="opacity-40 group-hover:opacity-100 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all p-1 rounded"
                             aria-label="Delete conversation"
+                            title="Delete conversation"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

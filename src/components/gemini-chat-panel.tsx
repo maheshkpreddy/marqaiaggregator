@@ -22,6 +22,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import ReactMarkdown from "react-markdown";
 import {
@@ -37,6 +39,8 @@ import {
   Cpu,
   CornerDownLeft,
   XCircle,
+  Plus,
+  MessageSquare,
 } from "lucide-react";
 
 /**
@@ -49,6 +53,13 @@ import {
  *
  * The panel calls /api/gemini/* endpoints, which read GEMINI_API_KEY
  * server-side. The key is never exposed to the browser.
+ *
+ * Multi-conversation support:
+ *  - Conversations are stored in localStorage (key: STORAGE_KEY).
+ *  - Each conversation has its own messages, model, system instruction.
+ *  - The left sidebar lists all conversations with always-visible delete buttons.
+ *  - Errored/empty messages are filtered from history before sending to Gemini
+ *    so a previous error never poisons the next turn.
  */
 
 interface GeminiModel {
@@ -67,13 +78,68 @@ interface ChatMessage {
   latencyMs?: number;
 }
 
+interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  model: string;
+  systemInstruction: string;
+  updatedAt: number;
+}
+
 const DEFAULT_SYSTEM_INSTRUCTION =
   "You are a helpful, concise assistant. Respond in well-structured Markdown when helpful.";
+
+const STORAGE_KEY = "gemini-chat-conversations-v1";
+const MAX_CONVERSATIONS = 50;
 
 function formatLatency(ms?: number): string {
   if (ms === undefined) return "";
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function loadConversations(): Conversation[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // Basic shape validation
+    return parsed.filter(
+      (c) =>
+        c &&
+        typeof c.id === "string" &&
+        typeof c.title === "string" &&
+        Array.isArray(c.messages) &&
+        typeof c.model === "string"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveConversations(convs: Conversation[]) {
+  if (typeof window === "undefined") return;
+  try {
+    // Cap to MAX_CONVERSATIONS to avoid unbounded localStorage growth.
+    const trimmed = convs.slice(0, MAX_CONVERSATIONS);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // localStorage might be full or disabled — fail silently.
+  }
+}
+
+function makeConversation(model: string, systemInstruction: string): Conversation {
+  return {
+    id: `conv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: "New chat",
+    messages: [],
+    model,
+    systemInstruction,
+    updatedAt: Date.now(),
+  };
 }
 
 export function GeminiChatPanel() {
@@ -82,16 +148,40 @@ export function GeminiChatPanel() {
   const [selectedModel, setSelectedModel] = useState<string>("gemini-flash-latest");
   const [systemInstruction, setSystemInstruction] = useState<string>(DEFAULT_SYSTEM_INSTRUCTION);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeId, setActiveId] = useState<string>("");
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Fetch model list on mount
+  // ─── Load conversations from localStorage on mount ───
+  useEffect(() => {
+    const loaded = loadConversations();
+    if (loaded.length > 0) {
+      setConversations(loaded);
+      setActiveId(loaded[0].id);
+      setSelectedModel(loaded[0].model);
+      setSystemInstruction(loaded[0].systemInstruction);
+    } else {
+      const conv = makeConversation("gemini-flash-latest", DEFAULT_SYSTEM_INSTRUCTION);
+      setConversations([conv]);
+      setActiveId(conv.id);
+    }
+    setInitialized(true);
+  }, []);
+
+  // ─── Persist to localStorage whenever conversations change ───
+  useEffect(() => {
+    if (!initialized) return;
+    saveConversations(conversations);
+  }, [conversations, initialized]);
+
+  // ─── Fetch model list on mount ───
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -102,7 +192,6 @@ export function GeminiChatPanel() {
         if (cancelled) return;
         if (Array.isArray(data.models) && data.models.length > 0) {
           setModels(data.models);
-          setSelectedModel(data.default ?? data.models[0].name);
         }
       } catch {
         // silent fail — hardcoded default is used
@@ -113,7 +202,7 @@ export function GeminiChatPanel() {
     };
   }, []);
 
-  // Auto-grow textarea
+  // ─── Auto-grow textarea ───
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -121,7 +210,13 @@ export function GeminiChatPanel() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input]);
 
-  // Auto-scroll on new messages
+  const activeConversation = useMemo(
+    () => conversations.find((c) => c.id === activeId),
+    [conversations, activeId]
+  );
+  const messages = activeConversation?.messages ?? [];
+
+  // ─── Auto-scroll on new messages ───
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -133,17 +228,112 @@ export function GeminiChatPanel() {
     [models, selectedModel]
   );
 
+  // ─── Update the active conversation's messages ───
+  const updateMessages = useCallback(
+    (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== activeId) return c;
+          return { ...c, messages: updater(c.messages), updatedAt: Date.now() };
+        })
+      );
+    },
+    [activeId]
+  );
+
+  // ─── Patch the active conversation (title, model, etc.) ───
+  const patchActive = useCallback(
+    (patch: Partial<Conversation>) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeId ? { ...c, ...patch, updatedAt: Date.now() } : c
+        )
+      );
+    },
+    [activeId]
+  );
+
   const stopStreaming = useCallback(() => {
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
     }
     setIsStreaming(false);
-    setMessages((prev) =>
+    updateMessages((prev) =>
       prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
     );
-  }, []);
+  }, [updateMessages]);
 
+  // ─── Conversation management ───
+  const newConversation = useCallback(() => {
+    stopStreaming();
+    const conv = makeConversation(selectedModel, systemInstruction);
+    setConversations((prev) => [conv, ...prev]);
+    setActiveId(conv.id);
+    setError(null);
+    setInput("");
+  }, [selectedModel, systemInstruction, stopStreaming]);
+
+  const deleteConversation = useCallback(
+    (id: string) => {
+      setConversations((prev) => {
+        const filtered = prev.filter((c) => c.id !== id);
+        if (filtered.length === 0) {
+          // Always keep at least one conversation
+          const fresh = makeConversation(
+            selectedModel,
+            systemInstruction
+          );
+          setActiveId(fresh.id);
+          return [fresh];
+        }
+        if (id === activeId) {
+          setActiveId(filtered[0].id);
+        }
+        return filtered;
+      });
+      setError(null);
+      toast({
+        title: "Conversation deleted",
+        description: "The chat has been removed.",
+      });
+    },
+    [activeId, selectedModel, systemInstruction, toast]
+  );
+
+  const switchConversation = useCallback(
+    (id: string) => {
+      if (id === activeId) return;
+      stopStreaming();
+      const target = conversations.find((c) => c.id === id);
+      if (target) {
+        setActiveId(id);
+        setSelectedModel(target.model);
+        setSystemInstruction(target.systemInstruction);
+        setError(null);
+        setInput("");
+      }
+    },
+    [activeId, conversations, stopStreaming]
+  );
+
+  const handleModelChange = useCallback(
+    (m: string) => {
+      setSelectedModel(m);
+      patchActive({ model: m });
+    },
+    [patchActive]
+  );
+
+  const handleSystemInstructionChange = useCallback(
+    (s: string) => {
+      setSystemInstruction(s);
+      patchActive({ systemInstruction: s });
+    },
+    [patchActive]
+  );
+
+  // ─── Send a message ───
   const sendMessage = useCallback(
     async (text?: string) => {
       const content = (text ?? input).trim();
@@ -164,13 +354,30 @@ export function GeminiChatPanel() {
         streaming: true,
       };
 
-      const history = [...messages, userMsg].map((m) => ({
+      // ─── CRITICAL FIX: filter errored / empty messages from history ───
+      // If a previous model response errored, its stored content is
+      // "**Request failed.**\n\n`errMsg`" — sending that back to Gemini as
+      // a "model" turn confuses the model and can cause empty responses
+      // or safety blocks on subsequent turns. We only send clean, non-empty
+      // messages.
+      const cleanHistory = messages.filter(
+        (m) => !m.error && m.content.trim().length > 0
+      );
+
+      const history = [...cleanHistory, userMsg].map((m) => ({
         role: m.role,
         content: m.content,
       }));
 
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      updateMessages((prev) => [...prev, userMsg, assistantMsg]);
       setIsStreaming(true);
+
+      // ─── Auto-title the conversation from the first user message ───
+      if (messages.length === 0) {
+        const title =
+          content.length > 42 ? content.slice(0, 42) + "…" : content;
+        patchActive({ title });
+      }
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -211,7 +418,7 @@ export function GeminiChatPanel() {
           if (done) break;
           acc += decoder.decode(value, { stream: true });
 
-          // Detect failover info sentinel (server fell back to alternate model).
+          // Detect failover info sentinel.
           const infoSentinel = "[STREAM_INFO]";
           const infoIdx = acc.indexOf(infoSentinel);
           if (infoIdx >= 0) {
@@ -248,7 +455,7 @@ export function GeminiChatPanel() {
           // Live-update the visible text. Trim leading whitespace so the
           // heartbeat byte doesn't show up as a stray space at the start.
           const visibleAcc = acc.replace(/^\s+/, "");
-          setMessages((prev) =>
+          updateMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMsg.id ? { ...m, content: visibleAcc } : m
             )
@@ -262,11 +469,11 @@ export function GeminiChatPanel() {
         // server-side issue (e.g. Vercel function restart, network drop).
         if (!sawErrorSentinel && trimmedAcc.length === 0) {
           errMsg =
-            "The server closed the connection without sending a response. This is usually a transient Vercel function issue — please try again in a few seconds.";
+            "The server closed the connection without sending a response. This is usually a transient issue — please try again in a few seconds.";
           setError(errMsg);
         }
 
-        setMessages((prev) =>
+        updateMessages((prev) =>
           prev.map((m) =>
             m.id === assistantMsg.id
               ? {
@@ -291,17 +498,17 @@ export function GeminiChatPanel() {
           });
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
+        const message = err instanceof Error ? err.message : String(err);
         if (err instanceof DOMException && err.name === "AbortError") {
           // user cancelled — leave partial text
         } else {
           setError(message);
-          setMessages((prev) =>
+          updateMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMsg.id
                 ? {
                     ...m,
-                    content: `**Error:** ${message}`,
+                    content: `**Request failed.**\n\n\`${message}\``,
                     streaming: false,
                     error: true,
                   }
@@ -319,7 +526,16 @@ export function GeminiChatPanel() {
         setIsStreaming(false);
       }
     },
-    [input, isStreaming, messages, selectedModel, systemInstruction, toast]
+    [
+      input,
+      isStreaming,
+      messages,
+      selectedModel,
+      systemInstruction,
+      toast,
+      updateMessages,
+      patchActive,
+    ]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -331,8 +547,9 @@ export function GeminiChatPanel() {
 
   const clearConversation = () => {
     stopStreaming();
-    setMessages([]);
+    updateMessages(() => []);
     setError(null);
+    patchActive({ title: "New chat" });
     toast({
       title: "Conversation cleared",
       description: "Started a fresh Gemini chat.",
@@ -349,260 +566,335 @@ export function GeminiChatPanel() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* Toolbar */}
-      <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white shadow-sm shrink-0">
-              <Sparkles className="h-3.5 w-3.5" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold tracking-tight truncate">
-                Gemini Chat
-              </h2>
-              <p className="text-[11px] text-muted-foreground truncate hidden sm:block">
-                Direct streaming access to Google Gemini · server-side key
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {selectedModelMeta && (
-              <Badge variant="secondary" className="hidden md:inline-flex gap-1">
-                <Cpu className="h-3 w-3" />
-                {selectedModelMeta.displayName}
-              </Badge>
+    <div className="flex h-full bg-background">
+      {/* ─── Sidebar: Conversation list ─── */}
+      <aside className="hidden md:flex w-64 flex-col border-r bg-background/40 shrink-0">
+        <div className="p-3">
+          <Button onClick={newConversation} className="w-full" size="sm">
+            <Plus className="h-3.5 w-3.5 mr-1.5" />
+            New chat
+          </Button>
+        </div>
+        <Separator />
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-1">
+            {conversations.length === 0 && (
+              <div className="text-xs text-muted-foreground p-4 text-center">
+                No conversations yet.
+              </div>
             )}
-            <Select value={selectedModel} onValueChange={setSelectedModel}>
-              <SelectTrigger className="h-8 w-[160px] sm:w-[190px] text-xs">
-                <SelectValue placeholder="Select model" />
-              </SelectTrigger>
-              <SelectContent>
-                {models.length === 0 ? (
-                  <SelectItem value={selectedModel} disabled>
-                    Loading…
-                  </SelectItem>
-                ) : (
-                  models.map((m) => (
-                    <SelectItem key={m.name} value={m.name}>
-                      <div className="flex flex-col">
-                        <span className="text-xs font-medium">{m.displayName}</span>
-                        <span className="text-[10px] text-muted-foreground">
-                          {m.contextWindow.toLocaleString()} ctx
-                        </span>
-                      </div>
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-
-            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8">
-                  <Settings2 className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline ml-1.5">Settings</span>
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[520px]">
-                <DialogHeader>
-                  <DialogTitle>Gemini chat settings</DialogTitle>
-                  <DialogDescription>
-                    Configure the system instruction that shapes Gemini&apos;s
-                    behavior. Saved for this session only.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-3 py-2">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="system-instruction">System instruction</Label>
-                    <Textarea
-                      id="system-instruction"
-                      value={systemInstruction}
-                      onChange={(e) => setSystemInstruction(e.target.value)}
-                      placeholder="e.g. You are a senior code reviewer. Be direct, cite line numbers."
-                      rows={6}
-                      className="resize-y font-mono text-xs"
-                    />
-                    <p className="text-[11px] text-muted-foreground">
-                      Gemini calls this &quot;system_instruction&quot;. It is
-                      prepended to every request and does not count as a turn.
-                    </p>
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label>About this integration</Label>
-                    <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1">
-                      <p>
-                        <span className="font-medium text-foreground">Region:</span>{" "}
-                        Vercel <code className="font-mono">iad1</code> (US East) —
-                        supported by Gemini API.
-                      </p>
-                      <p>
-                        <span className="font-medium text-foreground">Key:</span>{" "}
-                        Read server-side from{" "}
-                        <code className="font-mono">GEMINI_API_KEY</code> env var.
-                        Never exposed to the browser.
-                      </p>
-                      <p>
-                        <span className="font-medium text-foreground">Access:</span>{" "}
-                        Inherits the aggregator&apos;s auth — only logged-in users
-                        can reach this tab.
-                      </p>
+            {conversations.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => switchConversation(c.id)}
+                className={`group relative p-2.5 pr-9 rounded-lg cursor-pointer transition-colors ${
+                  c.id === activeId
+                    ? "bg-accent border border-accent-foreground/10"
+                    : "hover:bg-accent/50 border border-transparent"
+                }`}
+              >
+                <div className="flex items-start gap-2 min-w-0">
+                  <MessageSquare
+                    className={`h-3.5 w-3.5 mt-0.5 shrink-0 ${
+                      c.id === activeId
+                        ? "text-foreground"
+                        : "text-muted-foreground"
+                    }`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">
+                      {c.title}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground truncate mt-0.5">
+                      {c.messages.length} message
+                      {c.messages.length !== 1 ? "s" : ""}
+                      {" · "}
+                      {new Date(c.updatedAt).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
                     </div>
                   </div>
                 </div>
-                <DialogFooter>
-                  <Button
-                    variant="outline"
-                    onClick={() => setSystemInstruction(DEFAULT_SYSTEM_INSTRUCTION)}
-                  >
-                    Reset
-                  </Button>
-                  <Button onClick={() => setSettingsOpen(false)}>Save & close</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-muted-foreground"
-              onClick={clearConversation}
-              disabled={isEmpty && !isStreaming}
-              title="Clear conversation"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span className="sr-only">Clear conversation</span>
-            </Button>
-          </div>
-        </div>
-
-        {/* Status row */}
-        <div className="px-4 sm:px-6 pb-2 flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
-            </span>
-            Server-side key active
-          </span>
-          <span className="text-muted-foreground/40">|</span>
-          <span className="inline-flex items-center gap-1">
-            <Zap className="h-3 w-3" />
-            {isStreaming ? "Streaming response…" : "Ready"}
-          </span>
-          {error && (
-            <>
-              <span className="text-muted-foreground/40">|</span>
-              <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400">
-                <XCircle className="h-3 w-3" />
-                {error.length > 80 ? error.slice(0, 80) + "…" : error}
-              </span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Chat body */}
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        {isEmpty ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 overflow-y-auto">
-            <Card className="w-full max-w-2xl border-0 shadow-none sm:border sm:shadow-sm">
-              <CardHeader className="text-center space-y-2 pb-2">
-                <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white shadow-md">
-                  <Sparkles className="h-6 w-6" />
-                </div>
-                <CardTitle className="text-2xl">What can I help with?</CardTitle>
-                <CardDescription>
-                  Streaming chat with Google Gemini. Your API key stays
-                  server-side — calls run from{" "}
-                  <code className="font-mono text-xs">iad1</code> (US East).
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <div className="grid gap-2">
-                  {examplePrompts.map((p, i) => (
-                    <button
-                      key={i}
-                      onClick={() => sendMessage(p)}
-                      className="group text-left rounded-lg border bg-card px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:border-accent"
-                    >
-                      <div className="flex items-start gap-2">
-                        <CornerDownLeft className="mt-0.5 h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground" />
-                        <span>{p}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        ) : (
-          <div
-            ref={scrollRef}
-            className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6 space-y-6"
-          >
-            {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
+                {/* Always-visible delete button (not hover-only, so it works on touch) */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteConversation(c.id);
+                  }}
+                  className="absolute top-1.5 right-1.5 p-1 rounded text-muted-foreground hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                  aria-label="Delete conversation"
+                  title="Delete conversation"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
-        )}
+        </ScrollArea>
+        <Separator />
+        <div className="p-3 text-[10px] text-muted-foreground">
+          {conversations.length} conversation
+          {conversations.length !== 1 ? "s" : ""} · stored locally
+        </div>
+      </aside>
 
-        {/* Composer */}
-        <div className="border-t bg-background px-4 sm:px-6 py-3">
-          <div className="rounded-xl border bg-card focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all shadow-sm">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                isEmpty
-                  ? "Ask anything…  (Enter to send, Shift+Enter for newline)"
-                  : "Send a follow-up…"
-              }
-              rows={1}
-              className="min-h-[48px] max-h-[200px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm"
-              disabled={isStreaming}
-            />
-            <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <Badge variant="outline" className="gap-1 font-normal">
-                  <Bot className="h-3 w-3" />
-                  {selectedModelMeta?.displayName ?? selectedModel}
-                </Badge>
-                <span className="hidden sm:inline">
-                  <CornerDownLeft className="inline h-3 w-3" /> to send
-                </span>
+      {/* ─── Main chat area ─── */}
+      <div className="flex flex-col h-full flex-1 min-w-0">
+        {/* Toolbar */}
+        <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white shadow-sm shrink-0">
+                <Sparkles className="h-3.5 w-3.5" />
               </div>
-              <div className="flex items-center gap-1.5">
-                {isStreaming ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={stopStreaming}
-                    className="h-8"
-                  >
-                    <Square className="h-3 w-3 fill-current" />
-                    Stop
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={() => sendMessage()}
-                    disabled={input.trim().length === 0}
-                    className="h-8"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    Send
-                  </Button>
-                )}
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold tracking-tight truncate">
+                  Gemini Chat
+                </h2>
+                <p className="text-[11px] text-muted-foreground truncate hidden sm:block">
+                  Direct streaming access to Google Gemini · server-side key
+                </p>
               </div>
             </div>
+
+            <div className="flex items-center gap-2">
+              {selectedModelMeta && (
+                <Badge variant="secondary" className="hidden md:inline-flex gap-1">
+                  <Cpu className="h-3 w-3" />
+                  {selectedModelMeta.displayName}
+                </Badge>
+              )}
+              <Select value={selectedModel} onValueChange={handleModelChange}>
+                <SelectTrigger className="h-8 w-[160px] sm:w-[190px] text-xs">
+                  <SelectValue placeholder="Select model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.length === 0 ? (
+                    <SelectItem value={selectedModel} disabled>
+                      Loading…
+                    </SelectItem>
+                  ) : (
+                    models.map((m) => (
+                      <SelectItem key={m.name} value={m.name}>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-medium">{m.displayName}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {m.contextWindow.toLocaleString()} ctx
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+
+              <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8">
+                    <Settings2 className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline ml-1.5">Settings</span>
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[520px]">
+                  <DialogHeader>
+                    <DialogTitle>Gemini chat settings</DialogTitle>
+                    <DialogDescription>
+                      Configure the system instruction that shapes Gemini&apos;s
+                      behavior. Saved for this conversation.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-3 py-2">
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="system-instruction">System instruction</Label>
+                      <Textarea
+                        id="system-instruction"
+                        value={systemInstruction}
+                        onChange={(e) => handleSystemInstructionChange(e.target.value)}
+                        placeholder="e.g. You are a senior code reviewer. Be direct, cite line numbers."
+                        rows={6}
+                        className="resize-y font-mono text-xs"
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Gemini calls this &quot;system_instruction&quot;. It is
+                        prepended to every request and does not count as a turn.
+                      </p>
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label>About this integration</Label>
+                      <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1">
+                        <p>
+                          <span className="font-medium text-foreground">Region:</span>{" "}
+                          Vercel <code className="font-mono">iad1</code> (US East) —
+                          supported by Gemini API.
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">Key:</span>{" "}
+                          Read server-side from{" "}
+                          <code className="font-mono">GEMINI_API_KEY</code> env var.
+                          Never exposed to the browser.
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground">Access:</span>{" "}
+                          Inherits the aggregator&apos;s auth — only logged-in users
+                          can reach this tab.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleSystemInstructionChange(DEFAULT_SYSTEM_INSTRUCTION)}
+                    >
+                      Reset
+                    </Button>
+                    <Button onClick={() => setSettingsOpen(false)}>Save & close</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-muted-foreground"
+                onClick={clearConversation}
+                disabled={isEmpty && !isStreaming}
+                title="Clear current conversation"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span className="sr-only">Clear conversation</span>
+              </Button>
+            </div>
           </div>
-          <p className="mt-2 text-[10.5px] text-muted-foreground text-center">
-            Gemini may produce inaccurate information. Verify important outputs.
-          </p>
+
+          {/* Status row */}
+          <div className="px-4 sm:px-6 pb-2 flex items-center gap-3 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+              </span>
+              Server-side key active
+            </span>
+            <span className="text-muted-foreground/40">|</span>
+            <span className="inline-flex items-center gap-1">
+              <Zap className="h-3 w-3" />
+              {isStreaming ? "Streaming response…" : "Ready"}
+            </span>
+            {error && (
+              <>
+                <span className="text-muted-foreground/40">|</span>
+                <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400">
+                  <XCircle className="h-3 w-3" />
+                  {error.length > 80 ? error.slice(0, 80) + "…" : error}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Chat body */}
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          {isEmpty ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-6 overflow-y-auto">
+              <Card className="w-full max-w-2xl border-0 shadow-none sm:border sm:shadow-sm">
+                <CardHeader className="text-center space-y-2 pb-2">
+                  <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white shadow-md">
+                    <Sparkles className="h-6 w-6" />
+                  </div>
+                  <CardTitle className="text-2xl">What can I help with?</CardTitle>
+                  <CardDescription>
+                    Streaming chat with Google Gemini. Your API key stays
+                    server-side — calls run from{" "}
+                    <code className="font-mono text-xs">iad1</code> (US East).
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-4">
+                  <div className="grid gap-2">
+                    {examplePrompts.map((p, i) => (
+                      <button
+                        key={i}
+                        onClick={() => sendMessage(p)}
+                        className="group text-left rounded-lg border bg-card px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:border-accent"
+                      >
+                        <div className="flex items-start gap-2">
+                          <CornerDownLeft className="mt-0.5 h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground" />
+                          <span>{p}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6 space-y-6"
+            >
+              {messages.map((m) => (
+                <MessageBubble key={m.id} message={m} />
+              ))}
+            </div>
+          )}
+
+          {/* Composer */}
+          <div className="border-t bg-background px-4 sm:px-6 py-3">
+            <div className="rounded-xl border bg-card focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all shadow-sm">
+              <Textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  isEmpty
+                    ? "Ask anything…  (Enter to send, Shift+Enter for newline)"
+                    : "Send a follow-up…"
+                }
+                rows={1}
+                className="min-h-[48px] max-h-[200px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm"
+                disabled={isStreaming}
+              />
+              <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <Badge variant="outline" className="gap-1 font-normal">
+                    <Bot className="h-3 w-3" />
+                    {selectedModelMeta?.displayName ?? selectedModel}
+                  </Badge>
+                  <span className="hidden sm:inline">
+                    <CornerDownLeft className="inline h-3 w-3" /> to send
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {isStreaming ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={stopStreaming}
+                      className="h-8"
+                    >
+                      <Square className="h-3 w-3 fill-current" />
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={() => sendMessage()}
+                      disabled={input.trim().length === 0}
+                      className="h-8"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      Send
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+            <p className="mt-2 text-[10.5px] text-muted-foreground text-center">
+              Gemini may produce inaccurate information. Verify important outputs.
+            </p>
+          </div>
         </div>
       </div>
     </div>
