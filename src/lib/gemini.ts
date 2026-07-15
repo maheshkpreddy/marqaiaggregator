@@ -263,6 +263,8 @@ export async function* streamGemini(
         let rawFirstChunkPreview = "";
         let rawEventCount = 0;
         let rawEventSample = "(none)";
+        let rawEventParseError: string | null = null;
+        let rawFirstEventDiag = "(none)";
 
         // Process a single SSE event. Returns true if processing should
         // continue, false if an inline error was thrown (caller should
@@ -281,7 +283,10 @@ export async function* streamGemini(
           let json: any;
           try {
             json = JSON.parse(payload);
-          } catch {
+          } catch (parseErr) {
+            if (rawEventParseError === null) {
+              rawEventParseError = `JSON.parse failed: ${(parseErr as Error).message}; payload length=${payload.length}; payload preview=${JSON.stringify(payload.slice(0, 100))}`;
+            }
             // partial JSON — ignore, will be retried with more data
             return;
           }
@@ -306,12 +311,13 @@ export async function* streamGemini(
           }
 
           const parts = candidate?.content?.parts;
+          if (rawEventCount === 1) {
+            rawFirstEventDiag = `candidate=${JSON.stringify(candidate?.slice?.(0, 80) ?? candidate)}; partsType=${Array.isArray(parts) ? "array[" + parts.length + "]" : typeof parts}; finishReason=${candidate?.finishReason ?? "(none)"}`;
+          }
           if (Array.isArray(parts)) {
             for (const p of parts) {
               if (typeof p?.text === "string" && p.text.length > 0) {
                 yieldedAny = true;
-                // We can't yield from a nested function in a generator.
-                // Push to a queue and yield from the outer loop.
                 pendingText.push(p.text);
               }
             }
@@ -378,7 +384,7 @@ export async function* streamGemini(
             // Include diagnostic info: chunk count, first chunk preview,
             // AND whether the buffer split produced any events. This helps
             // debug SSE parsing issues (e.g. wrong separator).
-            reason += ` — no text was generated (received ${rawChunkCount} chunks; first: ${JSON.stringify(rawFirstChunkPreview)}; buffer was split into ${rawEventCount} events, ${rawEventSample}). Try rephrasing your message or switching models.`;
+            reason += ` — no text was generated (chunks=${rawChunkCount}; events=${rawEventCount}; parseError=${rawEventParseError ?? "(none)"}; firstEvent=${rawFirstEventDiag}; sample=${rawEventSample}). Try rephrasing your message or switching models.`;
           }
           const emptyErr: GeminiError = new Error(reason);
           emptyErr.transient = false;
