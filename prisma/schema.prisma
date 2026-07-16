@@ -31,6 +31,20 @@ model Organization {
   plan            String   @default("free") // free | pro | enterprise
   seatsTotal      Int      @default(5)
   seatsUsed       Int      @default(0)
+  // ── Super-admin approval workflow ──
+  // pending_approval — just registered, awaiting super admin review
+  // approved         — super admin approved, full app access
+  // rejected         — super admin rejected, login blocked with reason
+  // suspended        — temporarily blocked by super admin (e.g. billing issue)
+  status          String   @default("pending_approval")
+  rejectionReason String?
+  // Linked to the user who registered the org (the owner). Useful for the
+  // super admin's "pending approvals" queue.
+  registeredBy    String?
+  // Free-text note the super admin can attach to the tenant (e.g. "VIP customer").
+  adminNote       String?
+  // When the super admin last changed the plan/status.
+  planAssignedAt  DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -50,12 +64,46 @@ model User {
   email           String   @unique
   name            String?
   passwordHash    String
+  // Global role: "user" (default) or "super_admin". Super admins bypass
+  // org-scoped RBAC and get access to the Super Admin console.
+  globalRole      String   @default("user")
+  // Super admin can suspend a user globally (blocks login).
+  suspendedAt     DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   memberships     Membership[]
   sessions        AuthSession[]
   chatSessions    ChatSession[]
+}
+
+// ─────────────────────────────────────────────────────────────
+// Subscription plan catalog (managed by super admin)
+// ─────────────────────────────────────────────────────────────
+// Each plan defines a pricing tier (free / pro / enterprise / custom).
+// Super admins can edit the limits per plan; orgs are assigned to a plan
+// during the approval workflow. The Organization.plan field references
+// SubscriptionPlan.code.
+model SubscriptionPlan {
+  id              String   @id @default(cuid())
+  code            String   @unique // free | starter | pro | enterprise | custom
+  name            String
+  description     String?
+  // Monthly price in USD cents (0 = free). Display only — billing is external.
+  priceMonthlyUsd Int      @default(0)
+  seatsIncluded   Int      @default(5)
+  // Monthly request cap across all providers. 0 = unlimited.
+  requestsPerMonth Int     @default(0)
+  // CSV of allowed feature flags: chat,compare,agents,custom-api,unified-ai,
+  // gemini,provider-guide,analytics. Empty = all features.
+  features        String   @default("chat,compare,agents,custom-api")
+  // Whether new signups can self-select this plan (vs. super-admin-only).
+  publicVisible   Boolean  @default(true)
+  // Display ordering in the pricing matrix.
+  sortOrder       Int      @default(0)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model Membership {

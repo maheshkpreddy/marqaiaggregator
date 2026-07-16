@@ -26,6 +26,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 // ── Types ─────────────────────────────────────────────────────
 
 export type Role = "owner" | "admin" | "member" | "viewer";
+export type GlobalRole = "user" | "super_admin";
 export type Scope = "chat" | "compare" | "agents" | "read" | "admin" | "custom";
 
 export interface AuthContext {
@@ -33,15 +34,19 @@ export interface AuthContext {
     id: string;
     email: string;
     name: string | null;
+    globalRole: GlobalRole;
   };
   org: {
     id: string;
     name: string;
     slug: string;
     plan: string;
+    status: string; // pending_approval | approved | rejected | suspended
   };
   role: Role;
   membershipId: string;
+  /** True when user.globalRole === "super_admin". Bypasses org RBAC. */
+  isSuperAdmin: boolean;
 }
 
 // ── Password hashing (scrypt) ─────────────────────────────────
@@ -119,6 +124,10 @@ export function clearSessionCookie(res: NextResponse): void {
  *   2. Read `x-org-id` cookie OR fall back to the user's first membership.
  *   3. Look up the membership for that org to determine role.
  *
+ * For super admins (user.globalRole === "super_admin"), the org-scoped
+ * membership lookup is bypassed — they get a synthetic "owner" role on
+ * whatever org they pick, plus isSuperAdmin = true.
+ *
  * Returns null if the user isn't authenticated.
  */
 export async function getAuthContext(): Promise<AuthContext | null> {
@@ -140,31 +149,58 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     return null;
   }
 
-  // Pick the active org: prefer the `x-org-id` cookie if set, else the
-  // user's first membership.
+  const user = authSession.user;
+  const isSuperAdmin = user.globalRole === "super_admin";
+
+  // Suspended users (super-admin penalty) can't log in at all.
+  if (user.suspendedAt) return null;
+
+  // Pick the active org: prefer the `marq_org` cookie if set, else the
+  // user's first membership. Super admins without any membership get a
+  // synthetic context so they can still access the admin console.
   const orgStore = await cookies();
   const activeOrgId = orgStore.get("marq_org")?.value ?? null;
   const membership =
     (activeOrgId
-      ? authSession.user.memberships.find((m) => m.orgId === activeOrgId)
-      : null) ?? authSession.user.memberships[0];
+      ? user.memberships.find((m) => m.orgId === activeOrgId)
+      : null) ?? user.memberships[0];
 
-  if (!membership) return null; // user has no orgs
+  if (!membership) {
+    if (isSuperAdmin) {
+      // Super admin with no org membership — fabricate a minimal context.
+      return {
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          globalRole: "super_admin",
+        },
+        org: { id: "", name: "Super Admin", slug: "admin", plan: "enterprise", status: "approved" },
+        role: "owner",
+        membershipId: "",
+        isSuperAdmin: true,
+      };
+    }
+    return null; // user has no orgs
+  }
 
   return {
     user: {
-      id: authSession.user.id,
-      email: authSession.user.email,
-      name: authSession.user.name,
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      globalRole: user.globalRole as GlobalRole,
     },
     org: {
       id: membership.org.id,
       name: membership.org.name,
       slug: membership.org.slug,
       plan: membership.org.plan,
+      status: membership.org.status,
     },
-    role: membership.role as Role,
+    role: isSuperAdmin ? "owner" : (membership.role as Role),
     membershipId: membership.id,
+    isSuperAdmin,
   };
 }
 
@@ -186,13 +222,58 @@ export async function requireAuth(): Promise<AuthContext | NextResponse> {
 
 /**
  * Require an authenticated user with at least the given role on the active org.
+ * Super admins bypass the role check (they have implicit owner everywhere).
  */
 export async function requireRole(minRole: Role): Promise<AuthContext | NextResponse> {
   const ctx = await requireAuth();
   if (ctx instanceof NextResponse) return ctx;
+  if (ctx.isSuperAdmin) return ctx; // super admin bypass
   if (!hasMinRole(ctx.role, minRole)) {
     return NextResponse.json(
       { error: "Forbidden", detail: `Requires role >= ${minRole}` },
+      { status: 403 },
+    );
+  }
+  return ctx;
+}
+
+/**
+ * Require a super admin (user.globalRole === "super_admin"). Use this guard
+ * for routes that affect the whole platform (approve orgs, edit pricing,
+ * suspend users). Returns 403 for regular org-scoped users.
+ */
+export async function requireSuperAdmin(): Promise<AuthContext | NextResponse> {
+  const ctx = await requireAuth();
+  if (ctx instanceof NextResponse) return ctx;
+  if (!ctx.isSuperAdmin) {
+    return NextResponse.json(
+      { error: "Forbidden", detail: "Super admin privileges required" },
+      { status: 403 },
+    );
+  }
+  return ctx;
+}
+
+/**
+ * Require an authenticated user whose active org is approved.
+ * Super admins bypass this check (they need to access app routes for support
+ * and debugging even on suspended orgs).
+ *
+ * Returns 403 with a `pendingApproval` flag if the org is not approved,
+ * so the frontend can render the appropriate "pending" screen.
+ */
+export async function requireApprovedOrg(): Promise<AuthContext | NextResponse> {
+  const ctx = await requireAuth();
+  if (ctx instanceof NextResponse) return ctx;
+  if (ctx.isSuperAdmin) return ctx;
+  if (ctx.org.status !== "approved") {
+    return NextResponse.json(
+      {
+        error: "Organization not approved",
+        detail: `Your organization status is: ${ctx.org.status}`,
+        pendingApproval: ctx.org.status === "pending_approval",
+        orgStatus: ctx.org.status,
+      },
       { status: 403 },
     );
   }

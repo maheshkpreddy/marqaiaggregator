@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
       name: membership.org.name,
       slug: membership.org.slug,
       plan: membership.org.plan,
+      status: membership.org.status,
     },
     role: membership.role,
   });

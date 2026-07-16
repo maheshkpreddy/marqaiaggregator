@@ -13,7 +13,109 @@ import { hashPassword, slugify } from "../src/lib/auth";
 async function main() {
   console.log("Seeding Marq AI Aggregator default providers...");
 
+  // ── Subscription plan catalog (managed by super admin) ──
+  // These four plans form the default pricing matrix. The super admin can
+  // edit limits per plan from the Super Admin console after deployment.
+  const planDefs = [
+    {
+      code: "free",
+      name: "Free",
+      description: "For individuals and small teams trying Marq AI.",
+      priceMonthlyUsd: 0,
+      seatsIncluded: 5,
+      requestsPerMonth: 500,
+      features: "chat,compare,agents,custom-api",
+      publicVisible: true,
+      sortOrder: 0,
+      active: true,
+    },
+    {
+      code: "starter",
+      name: "Starter",
+      description: "For growing teams that need more seats and headroom.",
+      priceMonthlyUsd: 2900, // $29.00
+      seatsIncluded: 10,
+      requestsPerMonth: 10000,
+      features: "chat,compare,agents,custom-api,unified-ai,gemini",
+      publicVisible: true,
+      sortOrder: 1,
+      active: true,
+    },
+    {
+      code: "pro",
+      name: "Professional",
+      description: "For professional teams with heavier API usage needs.",
+      priceMonthlyUsd: 9900, // $99.00
+      seatsIncluded: 25,
+      requestsPerMonth: 100000,
+      features: "chat,compare,agents,custom-api,unified-ai,gemini,analytics,provider-guide",
+      publicVisible: true,
+      sortOrder: 2,
+      active: true,
+    },
+    {
+      code: "enterprise",
+      name: "Enterprise",
+      description: "Custom limits, priority support, and SSO. Contact sales.",
+      priceMonthlyUsd: 49900, // $499.00
+      seatsIncluded: 100,
+      requestsPerMonth: 0, // unlimited
+      features: "", // empty = all features
+      publicVisible: true,
+      sortOrder: 3,
+      active: true,
+    },
+    {
+      code: "custom",
+      name: "Custom",
+      description: "Negotiated plan for VIP customers. Super admin assigns only.",
+      priceMonthlyUsd: 0,
+      seatsIncluded: 50,
+      requestsPerMonth: 0,
+      features: "",
+      publicVisible: false, // hidden from public pricing
+      sortOrder: 4,
+      active: true,
+    },
+  ];
+  for (const p of planDefs) {
+    const existing = await db.subscriptionPlan.findUnique({ where: { code: p.code } });
+    if (!existing) {
+      await db.subscriptionPlan.create({ data: p });
+      console.log(`  ✓ Created subscription plan: ${p.name} (${p.code})`);
+    } else {
+      console.log(`  ✓ Subscription plan '${p.code}' already exists`);
+    }
+  }
+
+  // ── Super admin account ──
+  // The super admin can log in to the Super Admin console and approve new
+  // company registrations, assign subscription plans, and manage all users.
+  const superAdminEmail = "admin@marq.ai";
+  let superAdmin = await db.user.findUnique({ where: { email: superAdminEmail } });
+  if (!superAdmin) {
+    superAdmin = await db.user.create({
+      data: {
+        email: superAdminEmail,
+        name: "Marq Super Admin",
+        passwordHash: hashPassword("marq-admin-123"),
+        globalRole: "super_admin",
+      },
+    });
+    console.log("  ✓ Created super admin: admin@marq.ai / marq-admin-123");
+  } else if (superAdmin.globalRole !== "super_admin") {
+    // Promote the existing admin@marq.ai account if it exists but isn't a super admin.
+    superAdmin = await db.user.update({
+      where: { id: superAdmin.id },
+      data: { globalRole: "super_admin" },
+    });
+    console.log("  ✓ Promoted existing admin@marq.ai to super_admin");
+  } else {
+    console.log("  ✓ Super admin already exists");
+  }
+
   // ── Demo org + user (so a fresh Vercel deploy is immediately usable) ──
+  // The demo org is auto-approved so the platform is usable out of the box.
   const demoEmail = "demo@marq.ai";
   let user = await db.user.findUnique({ where: { email: demoEmail } });
   let demoOrgId: string;
@@ -25,6 +127,7 @@ async function main() {
         plan: "free",
         seatsTotal: 5,
         seatsUsed: 1,
+        status: "approved",
       },
     });
     demoOrgId = org.id;
@@ -38,6 +141,8 @@ async function main() {
     await db.membership.create({
       data: { userId: user.id, orgId: org.id, role: "owner" },
     });
+    // Stamp registeredBy
+    await db.organization.update({ where: { id: org.id }, data: { registeredBy: user.id } });
     console.log("  ✓ Created demo org 'Marq Demo' + demo user demo@marq.ai / marq-demo-123");
   } else {
     // Look up the demo org via the user's owner membership.
@@ -45,6 +150,13 @@ async function main() {
       where: { userId: user.id, role: "owner" },
     });
     demoOrgId = ownerMembership?.orgId ?? "";
+    // Backfill: ensure legacy demo orgs are approved.
+    if (demoOrgId) {
+      await db.organization.updateMany({
+        where: { id: demoOrgId, status: { not: "approved" } },
+        data: { status: "approved" },
+      });
+    }
     console.log("  ✓ Demo user already exists");
   }
 

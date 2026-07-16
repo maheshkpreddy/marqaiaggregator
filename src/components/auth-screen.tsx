@@ -14,7 +14,8 @@ import {
 interface AuthScreenProps {
   onSuccess: (data: {
     user: { id: string; email: string; name: string | null };
-    org: { id: string; name: string; slug: string; plan: string };
+    org: { id: string; name: string; slug: string; plan: string; status?: string } | null;
+    isSuperAdmin?: boolean;
   }) => void;
 }
 

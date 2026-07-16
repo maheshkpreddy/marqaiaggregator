@@ -33,6 +33,12 @@ export async function POST(req: NextRequest) {
   const finalSlug = slugTaken ? `${slug}-${Math.random().toString(36).slice(2, 6)}` : slug;
 
   // Create org + user + membership in one transaction.
+  // New orgs default to `pending_approval` — a super admin must approve them
+  // before the user can access the app. The very first org (when no other
+  // orgs exist yet) is auto-approved so the platform is bootstrappable.
+  const orgCount = await db.organization.count();
+  const initialStatus = orgCount === 0 ? "approved" : "pending_approval";
+
   const result = await db.$transaction(async (tx) => {
     const org = await tx.organization.create({
       data: {
@@ -41,6 +47,7 @@ export async function POST(req: NextRequest) {
         plan: "free",
         seatsTotal: 5,
         seatsUsed: 1,
+        status: initialStatus,
       },
     });
 
@@ -60,6 +67,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Stamp the org with registeredBy (post-create because we need the user id).
+    await tx.organization.update({
+      where: { id: org.id },
+      data: { registeredBy: user.id },
+    });
+
     return { org, user, membership };
   });
 
@@ -67,7 +80,15 @@ export async function POST(req: NextRequest) {
 
   const res = NextResponse.json({
     user: { id: result.user.id, email: result.user.email, name: result.user.name },
-    org: { id: result.org.id, name: result.org.name, slug: result.org.slug, plan: result.org.plan, role: "owner" },
+    org: {
+      id: result.org.id,
+      name: result.org.name,
+      slug: result.org.slug,
+      plan: result.org.plan,
+      role: "owner",
+      status: result.org.status,
+    },
+    pendingApproval: result.org.status === "pending_approval",
   });
   setSessionCookie(res, token, expiresAt);
   res.cookies.set("marq_org", result.org.id, {

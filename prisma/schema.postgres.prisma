@@ -25,6 +25,13 @@ model Organization {
   plan            String   @default("free")
   seatsTotal      Int      @default(5)
   seatsUsed       Int      @default(0)
+  // ── Super-admin approval workflow ──
+  // pending_approval | approved | rejected | suspended
+  status          String   @default("pending_approval")
+  rejectionReason String?
+  registeredBy    String?
+  adminNote       String?
+  planAssignedAt  DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -44,12 +51,30 @@ model User {
   email           String   @unique
   name            String?
   passwordHash    String
+  globalRole      String   @default("user")
+  suspendedAt     DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   memberships     Membership[]
   sessions        AuthSession[]
   chatSessions    ChatSession[]
+}
+
+model SubscriptionPlan {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  description     String?
+  priceMonthlyUsd Int      @default(0)
+  seatsIncluded   Int      @default(5)
+  requestsPerMonth Int     @default(0)
+  features        String   @default("chat,compare,agents,custom-api")
+  publicVisible   Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model Membership {

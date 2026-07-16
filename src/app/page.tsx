@@ -37,6 +37,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  Pause,
   ArrowRight,
   Clock,
   Loader2,
@@ -93,18 +94,21 @@ import { DashboardPanel, type Role as DashboardRole } from "@/components/dashboa
 import { GeminiChatPanel } from "@/components/gemini-chat-panel";
 import { AdminChatHistoryPanel } from "@/components/admin-chat-history-panel";
 import { CustomApiBuilderPanel } from "@/components/custom-api-builder-panel";
+import { SuperAdminPanel } from "@/components/super-admin-panel";
 
 // ---------- Auth types ----------
 interface AuthUser {
   id: string;
   email: string;
   name: string | null;
+  globalRole?: "user" | "super_admin";
 }
 interface AuthOrg {
   id: string;
   name: string;
   slug: string;
   plan: string;
+  status?: string;
 }
 interface Membership {
   id: string;
@@ -331,12 +335,13 @@ export default function Home() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authOrg, setAuthOrg] = useState<AuthOrg | null>(null);
   const [authRole, setAuthRole] = useState<string | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"dashboard" | "chat" | "chat-history" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "custom-api" | "guide" | "directory" | "unified-ai" | "analytics" | "docs" | "gemini">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "chat" | "chat-history" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "custom-api" | "guide" | "directory" | "unified-ai" | "analytics" | "docs" | "gemini" | "super-admin">("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -359,10 +364,11 @@ export default function Home() {
       try {
         const res = await fetch("/api/auth/me");
         const data = await res.json();
-        if (data.user && data.org) {
+        if (data.user && (data.org || data.isSuperAdmin)) {
           setAuthUser(data.user);
           setAuthOrg(data.org);
           setAuthRole(data.role);
+          setIsSuperAdmin(!!data.isSuperAdmin);
           setMemberships(data.memberships ?? []);
         } else {
           setAuthUser(null);
@@ -413,11 +419,13 @@ export default function Home() {
   // --- Auth actions ---
   async function handleAuthSuccess(data: {
     user: AuthUser;
-    org: AuthOrg;
+    org: AuthOrg | null;
+    isSuperAdmin?: boolean;
   }) {
     setAuthUser(data.user);
     setAuthOrg(data.org);
     setAuthRole("owner");
+    setIsSuperAdmin(!!data.isSuperAdmin);
     // Refresh the me endpoint to get the full memberships list
     try {
       const res = await fetch("/api/auth/me");
@@ -431,6 +439,7 @@ export default function Home() {
     setAuthUser(null);
     setAuthOrg(null);
     setAuthRole(null);
+    setIsSuperAdmin(false);
     setMemberships([]);
     setSessions([]);
     setMessages([]);
@@ -650,7 +659,19 @@ export default function Home() {
       </div>
     );
   }
-  if (!authUser || !authOrg || !authRole) {
+  if (!authUser || !authRole) {
+    return <AuthScreen onSuccess={handleAuthSuccess} />;
+  }
+  // Super admins with no org membership go straight to the admin console.
+  if (isSuperAdmin && !authOrg) {
+    return <SuperAdminOnlyShell user={authUser} onLogout={handleLogout}><SuperAdminPanel /></SuperAdminOnlyShell>;
+  }
+  // Regular users whose org is not approved get a status screen instead of the app.
+  if (!isSuperAdmin && authOrg && authOrg.status && authOrg.status !== "approved") {
+    return <OrgPendingScreen org={authOrg} onLogout={handleLogout} />;
+  }
+  // Safety net: if we somehow reach here without an org, go back to the auth screen.
+  if (!authOrg) {
     return <AuthScreen onSuccess={handleAuthSuccess} />;
   }
 
@@ -674,6 +695,7 @@ export default function Home() {
     apikeys: { group: "Settings", label: "API Keys" },
     "custom-api": { group: "Build", label: "Custom API Builder" },
     docs: { group: "Help", label: "Docs" },
+    "super-admin": { group: "Admin", label: "Super Admin" },
   };
   const currentMeta = TAB_META[tab];
   const isManager = authRole === "owner" || authRole === "admin";
@@ -682,6 +704,18 @@ export default function Home() {
   const sidebarNav = (
     <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
       <NavItem icon={LayoutDashboard} label="Dashboard" active={tab === "dashboard"} onClick={() => { setTab("dashboard"); setMobileNavOpen(false); }} />
+
+      {isSuperAdmin && (
+        <div className="space-y-1">
+          <NavItem
+            icon={Shield}
+            label="Super Admin"
+            active={tab === "super-admin"}
+            onClick={() => { setTab("super-admin"); setMobileNavOpen(false); }}
+            accent="violet"
+          />
+        </div>
+      )}
 
       <NavGroup label="Build">
         <NavItem icon={MessageSquare} label="Chat" active={tab === "chat"} onClick={() => { setTab("chat"); setMobileNavOpen(false); }} />
@@ -735,7 +769,13 @@ export default function Home() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{authOrg.name}</div>
-            <div className="text-[10px] text-slate-500 capitalize">{authRole} · {authOrg.plan}</div>
+            <div className="text-[10px] text-slate-500 capitalize">
+              {isSuperAdmin ? (
+                <span className="text-violet-600 dark:text-violet-400 font-semibold">★ Super Admin</span>
+              ) : (
+                <>{authRole} · {authOrg.plan}</>
+              )}
+            </div>
           </div>
           <ChevronDown className="w-3 h-3 text-slate-400" />
         </button>
@@ -1199,6 +1239,13 @@ export default function Home() {
           <TabsContent value="gemini" className="flex-1 m-0 data-[state=inactive]:hidden">
             <GeminiChatPanel />
           </TabsContent>
+
+          {/* SUPER ADMIN TAB — platform-wide admin console (super admins only) */}
+          {isSuperAdmin && (
+            <TabsContent value="super-admin" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+              <SuperAdminPanel />
+            </TabsContent>
+          )}
         </Tabs>
       </main>
       </div>
@@ -2069,28 +2116,174 @@ function NavItem({
   label,
   active,
   onClick,
+  accent,
 }: {
   icon: typeof MessageSquare;
   label: string;
   active: boolean;
   onClick: () => void;
+  accent?: "emerald" | "violet";
 }) {
+  const isViolet = accent === "violet";
   return (
     <button
       onClick={onClick}
       className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-sm font-medium transition-all group ${
         active
-          ? "bg-gradient-to-r from-emerald-50 to-cyan-50 dark:from-emerald-950/40 dark:to-cyan-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60 shadow-sm"
+          ? isViolet
+            ? "bg-gradient-to-r from-violet-50 to-fuchsia-50 dark:from-violet-950/40 dark:to-fuchsia-950/40 text-violet-700 dark:text-violet-300 border border-violet-200/60 dark:border-violet-800/60 shadow-sm"
+            : "bg-gradient-to-r from-emerald-50 to-cyan-50 dark:from-emerald-950/40 dark:to-cyan-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60 shadow-sm"
           : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70 hover:text-slate-900 dark:hover:text-white border border-transparent"
       }`}
     >
       <Icon
         className={`w-4 h-4 shrink-0 transition-colors ${
-          active ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300"
+          active
+            ? isViolet
+              ? "text-violet-600 dark:text-violet-400"
+              : "text-emerald-600 dark:text-emerald-400"
+            : "text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-300"
         }`}
         strokeWidth={2.2}
       />
       <span className="truncate">{label}</span>
     </button>
+  );
+}
+
+// ---------- Super Admin (no-org) shell ----------
+// Renders the SuperAdminPanel full-screen for super admins who haven't been
+// added to any organization. They use the platform purely as platform admins.
+function SuperAdminOnlyShell({
+  user,
+  onLogout,
+  children,
+}: {
+  user: AuthUser;
+  onLogout: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col">
+      <header className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2.5 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center shadow">
+            <Shield className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <div className="text-sm font-bold tracking-tight">Marq AI · Super Admin</div>
+            <div className="text-[10px] text-slate-500 dark:text-slate-400">Platform administration console</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">
+            {user.email}
+          </div>
+          <Button size="sm" variant="outline" onClick={onLogout}>
+            <LogOut className="w-3.5 h-3.5 mr-1.5" />
+            Sign out
+          </Button>
+        </div>
+      </header>
+      <main className="flex-1 overflow-y-auto">
+        {children}
+      </main>
+    </div>
+  );
+}
+
+// ---------- Org pending/rejected/suspended screen ----------
+// Shown to regular users whose organization has not been approved yet.
+function OrgPendingScreen({
+  org,
+  onLogout,
+}: {
+  org: AuthOrg;
+  onLogout: () => void;
+}) {
+  const isPending = org.status === "pending_approval";
+  const isRejected = org.status === "rejected";
+  const isSuspended = org.status === "suspended";
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
+      <div className="max-w-md w-full">
+        <div className="text-center mb-6">
+          <div
+            className={`inline-flex w-16 h-16 rounded-2xl items-center justify-center shadow-lg mb-4 ${
+              isPending
+                ? "bg-gradient-to-br from-amber-400 to-orange-500 shadow-amber-500/30"
+                : isRejected
+                ? "bg-gradient-to-br from-red-400 to-rose-500 shadow-red-500/30"
+                : "bg-gradient-to-br from-slate-400 to-slate-500 shadow-slate-500/30"
+            }`}
+          >
+            {isPending ? (
+              <Clock className="w-8 h-8 text-white" />
+            ) : isRejected ? (
+              <XCircle className="w-8 h-8 text-white" />
+            ) : (
+              <Pause className="w-8 h-8 text-white" />
+            )}
+          </div>
+          <h1 className="text-xl font-bold tracking-tight">
+            {isPending && "Approval in progress"}
+            {isRejected && "Registration declined"}
+            {isSuspended && "Organization suspended"}
+          </h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1.5">
+            {org.name}
+          </p>
+        </div>
+
+        <Card className="shadow-xl">
+          <CardContent className="p-6 space-y-4">
+            {isPending && (
+              <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                <p>
+                  Thanks for signing up! Your organization is currently being reviewed by
+                  our team. We approve new organizations within one business day.
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  You will receive an email at your registered address once your
+                  organization is approved. If you need to expedite approval, contact
+                  <span className="font-medium text-slate-700 dark:text-slate-200"> support@marq.ai</span>.
+                </p>
+              </div>
+            )}
+            {isRejected && (
+              <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                <p>
+                  We're sorry, but your organization registration was declined. If you
+                  believe this is in error, please contact our team.
+                </p>
+                <div className="rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 text-xs text-red-700 dark:text-red-300">
+                  <span className="font-semibold">Reason: </span>
+                  {/* The rejection reason is fetched on login and shown in the error
+                      message; here we just show a generic message because the org
+                      object may not carry the reason. */}
+                  Please contact support@marq.ai for details.
+                </div>
+              </div>
+            )}
+            {isSuspended && (
+              <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                <p>
+                  Your organization has been suspended. This is usually due to a billing
+                  issue or a terms-of-service violation.
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Contact <span className="font-medium text-slate-700 dark:text-slate-200">support@marq.ai</span> to restore access.
+                </p>
+              </div>
+            )}
+            <Button onClick={onLogout} variant="outline" className="w-full">
+              <LogOut className="w-4 h-4 mr-2" />
+              Sign out
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }
