@@ -9,6 +9,10 @@ interface Params {
 /**
  * GET /api/sessions/[id]/messages
  * Returns all messages for a session, oldest first. Scoped by org.
+ *
+ * Soft-delete handling:
+ *  - Regular users cannot read a soft-deleted session (404).
+ *  - Org owners (super admin) CAN read soft-deleted sessions for audit.
  */
 export async function GET(_req: NextRequest, { params }: Params) {
   const ctx = await requireRole("viewer");
@@ -18,6 +22,21 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const session = await db.chatSession.findUnique({ where: { id } });
   if (!session || session.orgId !== ctx.org.id) {
     return NextResponse.json({ error: "Session not found in this org" }, { status: 404 });
+  }
+
+  // If the session is soft-deleted, only org owners can still read it.
+  const isOrgOwner = ctx.role === "owner";
+  if (session.deletedAt && !isOrgOwner) {
+    return NextResponse.json({ error: "Session not found in this org" }, { status: 404 });
+  }
+
+  // If the session is not soft-deleted, only the owner (or org admin) can read it.
+  if (!session.deletedAt) {
+    const isOwnerOfSession = session.userId === ctx.user.id;
+    const isOrgAdmin = ctx.role === "owner" || ctx.role === "admin";
+    if (!isOwnerOfSession && !isOrgAdmin) {
+      return NextResponse.json({ error: "Session not found in this org" }, { status: 404 });
+    }
   }
 
   const messages = await db.message.findMany({
@@ -63,6 +82,17 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (!session || session.orgId !== ctx.org.id) {
     return NextResponse.json({ error: "Session not found in this org" }, { status: 404 });
   }
+
+  // Authorization: owner of the session OR org owner/admin.
+  const isOwnerOfSession = session.userId === ctx.user.id;
+  const isOrgAdmin = ctx.role === "owner" || ctx.role === "admin";
+  if (!isOwnerOfSession && !isOrgAdmin) {
+    return NextResponse.json(
+      { error: "You can only clear your own sessions" },
+      { status: 403 }
+    );
+  }
+
   await db.message.deleteMany({ where: { sessionId: id } });
   return NextResponse.json({ ok: true });
 }

@@ -75,6 +75,7 @@ import {
   Menu,
   X,
   ServerCog,
+  History,
 } from "lucide-react";
 import { AuthScreen } from "@/components/auth-screen";
 import { OrganizationPanel } from "@/components/org-panel";
@@ -89,6 +90,7 @@ import { AIAnalyticsDashboard } from "@/components/ai-analytics-dashboard";
 import { DocumentationPanel } from "@/components/documentation-panel";
 import { DashboardPanel, type Role as DashboardRole } from "@/components/dashboard-panel";
 import { GeminiChatPanel } from "@/components/gemini-chat-panel";
+import { AdminChatHistoryPanel } from "@/components/admin-chat-history-panel";
 
 // ---------- Auth types ----------
 interface AuthUser {
@@ -332,7 +334,7 @@ export default function Home() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"dashboard" | "chat" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "unified-ai" | "analytics" | "docs" | "gemini">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "chat" | "chat-history" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "unified-ai" | "analytics" | "docs" | "gemini">("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -654,6 +656,7 @@ export default function Home() {
   const TAB_META: Record<typeof tab, { group: string; label: string }> = {
     dashboard: { group: "Overview", label: "Dashboard" },
     chat: { group: "Build", label: "Chat" },
+    "chat-history": { group: "Settings", label: "Chat History" },
     compare: { group: "Build", label: "Compare" },
     agent: { group: "Build", label: "Agents" },
     prompts: { group: "Build", label: "Prompts" },
@@ -679,6 +682,9 @@ export default function Home() {
 
       <NavGroup label="Build">
         <NavItem icon={MessageSquare} label="Chat" active={tab === "chat"} onClick={() => { setTab("chat"); setMobileNavOpen(false); }} />
+        {authRole === "owner" && (
+          <NavItem icon={History} label="Chat History" active={tab === "chat-history"} onClick={() => { setTab("chat-history"); setMobileNavOpen(false); }} />
+        )}
         <NavItem icon={Brain} label="Agents" active={tab === "agent"} onClick={() => { setTab("agent"); setMobileNavOpen(false); }} />
         <NavItem icon={GitCompare} label="Compare" active={tab === "compare"} onClick={() => { setTab("compare"); setMobileNavOpen(false); }} />
         <NavItem icon={BookMarked} label="Prompts" active={tab === "prompts"} onClick={() => { setTab("prompts"); setMobileNavOpen(false); }} />
@@ -991,13 +997,13 @@ export default function Home() {
                       </div>
                     )}
                     {sessions.map((s) => (
-                      <button
+                      <div
                         key={s.id}
                         onClick={() => {
                           setActiveSessionId(s.id);
                           setLastResponse(null);
                         }}
-                        className={`w-full text-left p-3 rounded-lg transition-colors group ${
+                        className={`relative w-full text-left p-3 pr-10 rounded-lg transition-colors cursor-pointer group ${
                           activeSessionId === s.id
                             ? "bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800"
                             : "hover:bg-slate-100 dark:hover:bg-slate-900 border border-transparent"
@@ -1010,22 +1016,25 @@ export default function Home() {
                               {s.lastMessage || "No messages yet"}
                             </div>
                           </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteSession(s.id);
-                            }}
-                            className="opacity-40 group-hover:opacity-100 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all p-1 rounded"
-                            aria-label="Delete conversation"
-                            title="Delete conversation"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
                         </div>
                         <div className="text-[10px] text-slate-400 mt-1">
                           {new Date(s.updatedAt).toLocaleString()}
                         </div>
-                      </button>
+                        {/* Always-visible delete button. Sibling (not child) of the
+                            row's clickable area so the click fires reliably on both
+                            desktop and touch devices. */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteSession(s.id);
+                          }}
+                          className="absolute top-2 right-2 p-1.5 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                          aria-label="Delete conversation"
+                          title="Delete conversation"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </ScrollArea>
@@ -1093,6 +1102,11 @@ export default function Home() {
                 </div>
               </section>
             </div>
+          </TabsContent>
+
+          {/* CHAT HISTORY TAB — org-owner-only audit view of all conversations */}
+          <TabsContent value="chat-history" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <AdminChatHistoryPanel />
           </TabsContent>
 
           {/* AGENT TAB */}

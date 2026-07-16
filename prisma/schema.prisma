@@ -54,6 +54,7 @@ model User {
 
   memberships     Membership[]
   sessions        AuthSession[]
+  chatSessions    ChatSession[]
 }
 
 model Membership {
@@ -185,17 +186,27 @@ model ChatSession {
   id          String   @id @default(cuid())
   orgId       String?
   org         Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  // The user who created/owns this session. Nullable for backward compat
+  // with sessions created before this field was added.
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   title       String   @default("New Conversation")
   // When non-null, this session is an agent chat (multi-turn ReAct loop)
   // driven by the persona identified by agentType. When null, it's a
   // regular chat session (direct LLM call, no tools).
   agentType   String?
+  // Soft-delete: when set, the session is hidden from the owning user's
+  // sidebar but remains visible to org owners (super admin) for audit.
+  deletedAt   DateTime?
+  deletedBy   String?  // userId of who soft-deleted the session
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   messages    Message[]
 
   @@index([orgId, agentType, updatedAt])
+  @@index([userId, orgId, deletedAt, updatedAt])
+  @@index([orgId, deletedAt, updatedAt])
 }
 
 model Message {
