@@ -26,7 +26,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 // ── Types ─────────────────────────────────────────────────────
 
 export type Role = "owner" | "admin" | "member" | "viewer";
-export type Scope = "chat" | "compare" | "agents" | "read" | "admin";
+export type Scope = "chat" | "compare" | "agents" | "read" | "admin" | "custom";
 
 export interface AuthContext {
   user: {

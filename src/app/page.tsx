@@ -76,6 +76,7 @@ import {
   X,
   ServerCog,
   History,
+  Wand2,
 } from "lucide-react";
 import { AuthScreen } from "@/components/auth-screen";
 import { OrganizationPanel } from "@/components/org-panel";
@@ -91,6 +92,7 @@ import { DocumentationPanel } from "@/components/documentation-panel";
 import { DashboardPanel, type Role as DashboardRole } from "@/components/dashboard-panel";
 import { GeminiChatPanel } from "@/components/gemini-chat-panel";
 import { AdminChatHistoryPanel } from "@/components/admin-chat-history-panel";
+import { CustomApiBuilderPanel } from "@/components/custom-api-builder-panel";
 
 // ---------- Auth types ----------
 interface AuthUser {
@@ -334,7 +336,7 @@ export default function Home() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   // ── App state ──
-  const [tab, setTab] = useState<"dashboard" | "chat" | "chat-history" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "guide" | "directory" | "unified-ai" | "analytics" | "docs" | "gemini">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "chat" | "chat-history" | "compare" | "prompts" | "agent" | "providers" | "health" | "failovers" | "org" | "apikeys" | "custom-api" | "guide" | "directory" | "unified-ai" | "analytics" | "docs" | "gemini">("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -670,6 +672,7 @@ export default function Home() {
     analytics: { group: "Settings", label: "Analytics" },
     org: { group: "Settings", label: "Team" },
     apikeys: { group: "Settings", label: "API Keys" },
+    "custom-api": { group: "Build", label: "Custom API Builder" },
     docs: { group: "Help", label: "Docs" },
   };
   const currentMeta = TAB_META[tab];
@@ -688,6 +691,9 @@ export default function Home() {
         <NavItem icon={Brain} label="Agents" active={tab === "agent"} onClick={() => { setTab("agent"); setMobileNavOpen(false); }} />
         <NavItem icon={GitCompare} label="Compare" active={tab === "compare"} onClick={() => { setTab("compare"); setMobileNavOpen(false); }} />
         <NavItem icon={BookMarked} label="Prompts" active={tab === "prompts"} onClick={() => { setTab("prompts"); setMobileNavOpen(false); }} />
+        {isManager && (
+          <NavItem icon={Wand2} label="Custom API Builder" active={tab === "custom-api"} onClick={() => { setTab("custom-api"); setMobileNavOpen(false); }} />
+        )}
       </NavGroup>
 
       <NavGroup label="Discover">
@@ -1177,6 +1183,11 @@ export default function Home() {
           {/* API KEYS TAB */}
           <TabsContent value="apikeys" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
             <ApiKeysPanel auth={{ role: authRole }} />
+          </TabsContent>
+
+          {/* CUSTOM API BUILDER TAB — AI-suggested provider chains + scoped keys */}
+          <TabsContent value="custom-api" className="flex-1 m-0 data-[state=inactive]:hidden overflow-y-auto">
+            <CustomApiBuilderPanel auth={{ role: authRole }} />
           </TabsContent>
 
           {/* DOCS TAB — in-product technical, functional, and SOP documentation */}

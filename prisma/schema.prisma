@@ -42,6 +42,7 @@ model Organization {
   files           FileUpload[]
   apiKeys         ApiKey[]
   comparisonRuns  ComparisonRun[]
+  customApis      CustomApiConfig[]
 }
 
 model User {
@@ -90,12 +91,13 @@ model ApiKey {
   name            String
   keyPrefix       String   // first 12 chars of the key, shown in UI
   keyHash         String   @unique // SHA-256 hash of the full key
-  scopes          String   @default("chat,compare,agents") // CSV: chat,compare,agents,read
+  scopes          String   @default("chat,compare,agents") // CSV: chat,compare,agents,read,admin,custom
   lastUsedAt      DateTime?
   createdAt       DateTime @default(now())
   revokedAt       DateTime?
 
   org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customApis      CustomApiConfig[]
 
   @@index([orgId])
 }
@@ -142,6 +144,43 @@ model ComparisonRun {
   org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Custom API Builder
+// ─────────────────────────────────────────────────────────────
+// A CustomApiConfig links an API key to an ordered subset of providers.
+// The user describes a requirement in natural language; the AI picks a
+// small chain of providers (open-source first, paid as fallback) and
+// generates a unified API key scoped to that chain. Calls to the custom
+// invoke endpoint route ONLY through the configured providers, giving
+// faster, more reliable output than the full 30+ provider failover chain.
+
+model CustomApiConfig {
+  id              String   @id @default(cuid())
+  orgId           String
+  apiKeyId        String
+  name            String
+  description     String?                  // the natural-language requirement
+  // JSON array of provider IDs in failover order (index 0 = primary).
+  providerIds     String
+  // If true, apply reorderProvidersOpenSourceFirst on top of providerIds.
+  openSourceFirst Boolean  @default(true)
+  // JSON map of { providerId: modelId } for model pinning. Optional.
+  modelOverrides  String?
+  // AI-generated rationale for the provider selection (shown in UI).
+  rationale       String?
+  // Per-request timeout in ms (default 12000 — shorter than the global
+  // 18s to keep custom APIs fast).
+  timeoutMs       Int      @default(12000)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  apiKey          ApiKey       @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([apiKeyId])
 }
 
 // ─────────────────────────────────────────────────────────────

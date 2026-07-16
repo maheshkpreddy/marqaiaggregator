@@ -36,6 +36,7 @@ model Organization {
   files           FileUpload[]
   apiKeys         ApiKey[]
   comparisonRuns  ComparisonRun[]
+  customApis      CustomApiConfig[]
 }
 
 model User {
@@ -90,6 +91,7 @@ model ApiKey {
   revokedAt       DateTime?
 
   org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  customApis      CustomApiConfig[]
 
   @@index([orgId])
 }
@@ -136,6 +138,31 @@ model ComparisonRun {
   org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([orgId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Custom API Builder
+// ─────────────────────────────────────────────────────────────
+
+model CustomApiConfig {
+  id              String   @id @default(cuid())
+  orgId           String
+  apiKeyId        String
+  name            String
+  description     String?
+  providerIds     String
+  openSourceFirst Boolean  @default(true)
+  modelOverrides  String?
+  rationale       String?
+  timeoutMs       Int      @default(12000)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  apiKey          ApiKey       @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([apiKeyId])
 }
 
 // ─────────────────────────────────────────────────────────────
