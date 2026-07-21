@@ -68,3 +68,25 @@ Stage Summary:
 - RBAC is enforced at the API layer — regular users get HTTP 403 on /api/admin/* endpoints even if they craft requests manually
 - Self-protection built in: a super admin cannot demote/suspend themselves, and the last super admin cannot be demoted (prevents platform lock-out)
 - The commit is local; user needs to `git push origin main` to deploy to Vercel (sandbox lacks GitHub push credentials). All schema + code changes are ready for Vercel's automatic build (vercel-build.sh will swap in the Postgres schema and run prisma db push before building).
+
+---
+Task ID: push-to-git-and-vercel-deploy
+Agent: main (super-z)
+Task: Push the completed super admin / RBAC / approval workflow / subscription plan / custom API builder / failover fix code to GitHub and trigger Vercel deployment using the user-provided PAT.
+
+Work Log:
+- Inspected repo state: 15 unpushed commits on local main vs origin/main (last pushed commit was 057e9f5 "feat(gemini): embed Gemini Chat as a tab inside the aggregator"). Local HEAD was d29823a "docs: worklog + smoke/e2e test scripts for super admin workflow".
+- The unpushed commits include: Custom API Builder with AI-powered provider selection, Marq AI failover timeout fix, super admin console + company approval workflow, chat soft-delete, Gemini SSE parsing fixes, header z-index fix, smoke/e2e test scripts.
+- Configured git remote.origin.url with embedded PAT (ghp_***) for one-shot authenticated push, then immediately restored the clean URL (no token) afterward so the PAT is NOT persisted in git config.
+- Ran `git push origin main` — successful fast-forward: 9019341..d29823a. All 15 commits now on origin/main.
+- Verified sync: `git log origin/main..HEAD` is empty (local and remote HEAD both point at d29823a).
+- Vercel CLI not installed locally and no .vercel project link present; deployment must be triggered via the existing GitHub→Vercel auto-deploy integration on the main branch.
+
+Stage Summary:
+- All 15 commits pushed to https://github.com/maheshkpreddy/marqaiaggregator (main branch).
+- Vercel auto-deploy should fire automatically from the GitHub push (project uses vercel.json with buildCommand: bash ./vercel-build.sh, installCommand: npm install --legacy-peer-deps, regions: iad1).
+- The Vercel build script will: prisma generate (postgres schema) → prisma db push → seed default providers + super admin account (admin@marq.ai / marq-admin-123) + 5 subscription plans + demo org → next build.
+- SECURITY: The user shared a GitHub PAT in chat. They should rotate/revoke it at https://github.com/settings/tokens immediately, since it is now exposed in the chat transcript.
+- Post-deploy verification commands the user can run against their Vercel URL:
+    curl -X POST https://<vercel-url>/api/auth/login -H "Content-Type: application/json" -d '{"email":"admin@marq.ai","password":"marq-admin-123"}'
+  Then hit /api/admin/stats, /api/admin/orgs?status=pending_approval, /api/admin/plans with the session cookie.
