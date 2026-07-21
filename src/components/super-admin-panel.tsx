@@ -9,7 +9,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -172,9 +171,10 @@ export function SuperAdminPanel() {
   const [reviewNote, setReviewNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
 
-  // Module Access dialog: opened when the admin clicks "Modules" on any org.
-  // Lets the super admin grant or revoke individual modules per company,
-  // overriding the plan's default feature set.
+  // Module Access inline panel: rendered directly inside the Organizations
+  // tab when the admin clicks "Modules" on any org. Lets the super admin
+  // grant or revoke individual modules per company, overriding the plan's
+  // default feature set.
   const [moduleOrg, setModuleOrg] = useState<OrgRow | null>(null);
   const [moduleConfig, setModuleConfig] = useState<ModuleAccessConfig | null>(null);
   const [moduleLoading, setModuleLoading] = useState(false);
@@ -323,11 +323,11 @@ export function SuperAdminPanel() {
     }
   }
 
-  // ── Module Access dialog ────────────────────────────────────────
+  // ── Module Access inline panel ─────────────────────────────────
   // Loads the per-org module config (catalog + plan features + overrides +
   // effective set) and seeds the local edits map with the current state.
-
-  async function openModuleDialog(org: OrgRow) {
+  // The panel itself is rendered inline inside the org row (no popup).
+  async function openModulePanel(org: OrgRow) {
     setModuleOrg(org);
     setModuleConfig(null);
     setModuleEdits(new Map());
@@ -734,12 +734,12 @@ export function SuperAdminPanel() {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <Button
                               size="sm" variant="outline"
-                              className="h-7 text-xs"
-                              onClick={() => openModuleDialog(o)}
+                              className={`h-7 text-xs ${moduleOrg?.id === o.id ? "bg-violet-50 dark:bg-violet-900/30 border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300" : ""}`}
+                              onClick={() => moduleOrg?.id === o.id ? setModuleOrg(null) : openModulePanel(o)}
                               disabled={actionLoading === o.id}
                               title="Configure which modules this company can access"
                             >
-                              <LayoutGrid className="w-3 h-3 mr-1" />Modules
+                              <LayoutGrid className="w-3 h-3 mr-1" />{moduleOrg?.id === o.id ? "Hide Modules" : "Modules"}
                             </Button>
                             {o.status === "pending_approval" && (
                               <Button
@@ -795,6 +795,26 @@ export function SuperAdminPanel() {
                             )}
                           </div>
                         </div>
+
+                      {/* ── Inline Module Access panel ── */}
+                      {/* Expanded directly inside the Organizations tab (no popup).
+                          Uses a native scrolling div (overflow-y-auto) because the
+                          shadcn ScrollArea primitive was not scrolling reliably
+                          inside the previous Dialog. */}
+                      {moduleOrg?.id === o.id && (
+                        <ModuleInlinePanel
+                          org={moduleOrg}
+                          config={moduleConfig}
+                          loading={moduleLoading}
+                          saving={moduleSaving}
+                          edits={moduleEdits}
+                          onToggle={toggleModuleEdit}
+                          onNote={setModuleNoteEdit}
+                          onReset={resetModuleEditsToPlanDefault}
+                          onSave={saveModuleAccess}
+                          onClose={() => setModuleOrg(null)}
+                        />
+                      )}
                       </div>
                     );
                   })}
@@ -1117,148 +1137,195 @@ export function SuperAdminPanel() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Module Access dialog ── */}
-      <Dialog open={!!moduleOrg} onOpenChange={(o) => !o && setModuleOrg(null)}>
-        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <LayoutGrid className="w-4 h-4 text-violet-500" />
-              Module Access — {moduleOrg?.name}
-            </DialogTitle>
-            <DialogDescription>
-              Grant or revoke individual modules for this company. Overrides the plan's default feature set.
-              {" "}Current plan: <strong>{moduleConfig?.planName ?? moduleOrg?.plan}</strong>.
-            </DialogDescription>
-          </DialogHeader>
+    </div>
+  );
+}
 
-          {moduleLoading && (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+// ── Module Access inline panel (rendered inside the Organizations tab) ──
+// Replaces the previous Dialog popup. Uses a native overflow-y-auto div
+// (instead of shadcn ScrollArea) so the scroll-down works reliably across
+// browsers and inside flex/grid containers.
+
+interface ModuleInlinePanelProps {
+  org: OrgRow;
+  config: ModuleAccessConfig | null;
+  loading: boolean;
+  saving: boolean;
+  edits: Map<string, { enabled: boolean; note: string }>;
+  onToggle: (key: string, enabled: boolean) => void;
+  onNote: (key: string, note: string) => void;
+  onReset: () => void;
+  onSave: () => void;
+  onClose: () => void;
+}
+
+function ModuleInlinePanel({
+  org, config, loading, saving, edits,
+  onToggle, onNote, onReset, onSave, onClose,
+}: ModuleInlinePanelProps) {
+  const enabledCount = Array.from(edits.values()).filter((v) => v.enabled).length;
+  const disabledCount = edits.size - enabledCount;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+      {/* Header row */}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div className="flex items-center gap-2">
+          <LayoutGrid className="w-4 h-4 text-violet-500" />
+          <div>
+            <div className="text-sm font-semibold">
+              Module Access — {org.name}
             </div>
-          )}
+            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              Grant or revoke individual modules for this company. Plan:{" "}
+              <strong>{config?.planName ?? org.plan}</strong>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="sm" variant="ghost"
+            className="h-7 text-xs"
+            onClick={onReset}
+            disabled={saving || !config}
+            title="Reset all toggles to the plan's default feature set"
+          >
+            <RotateCcw className="w-3 h-3 mr-1" />Reset to plan
+          </Button>
+          <Button
+            size="sm" variant="ghost"
+            className="h-7 text-xs"
+            onClick={onClose}
+            disabled={saving}
+            title="Collapse module panel"
+          >
+            Close
+          </Button>
+        </div>
+      </div>
 
-          {!moduleLoading && moduleConfig && (
-            <>
-              {/* Summary bar */}
-              <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-xs">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]">
-                    {moduleEdits.size} total modules
-                  </Badge>
-                  <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                    {Array.from(moduleEdits.values()).filter((v) => v.enabled).length} enabled
-                  </Badge>
-                  <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300">
-                    {Array.from(moduleEdits.values()).filter((v) => !v.enabled).length} disabled
-                  </Badge>
-                  <span className="text-slate-500 dark:text-slate-400">
-                    Plan default: {moduleConfig.planFeatures.length === 0 ? "all modules" : `${moduleConfig.planFeatures.length} modules`}
-                  </span>
-                </div>
-                <Button
-                  size="sm" variant="ghost"
-                  className="h-7 text-xs"
-                  onClick={resetModuleEditsToPlanDefault}
-                  disabled={moduleSaving}
-                  title="Reset all toggles to the plan's default feature set"
-                >
-                  <RotateCcw className="w-3 h-3 mr-1" />Reset to plan
-                </Button>
-              </div>
+      {loading && (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+        </div>
+      )}
 
-              {/* Module list grouped by group */}
-              <ScrollArea className="flex-1 -mx-1 px-1">
-                <div className="space-y-4 py-1">
-                  {(["System", "Build", "Discover", "Settings", "Help"] as const).map((groupName) => {
-                    const groupModules = moduleConfig.catalog.filter((m) => m.group === groupName);
-                    if (groupModules.length === 0) return null;
-                    return (
-                      <div key={groupName} className="space-y-1.5">
-                        <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-semibold px-1">
-                          {groupName}
-                        </div>
-                        {groupModules.map((m) => {
-                          const edit = moduleEdits.get(m.key);
-                          const isEnabled = edit?.enabled ?? false;
-                          const planFeaturesSet = new Set(
-                            moduleConfig.planFeatures.length === 0
-                              ? moduleConfig.catalog.map((mm) => mm.key)
-                              : moduleConfig.planFeatures,
-                          );
-                          const planDefault = m.alwaysOn ? true : planFeaturesSet.has(m.key);
-                          const isOverride = isEnabled !== planDefault || !!edit?.note;
-                          return (
-                            <div
-                              key={m.key}
-                              className={`rounded-lg border px-3 py-2 transition-colors ${
-                                isEnabled
-                                  ? "border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/40 dark:bg-emerald-900/10"
-                                  : "border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-sm font-medium truncate">{m.label}</span>
-                                    <code className="text-[10px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                                      {m.key}
-                                    </code>
-                                    {m.alwaysOn && (
-                                      <Badge variant="outline" className="text-[9px] bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200 dark:border-amber-800">
-                                        <Lock className="w-2.5 h-2.5 mr-0.5" />Always on
-                                      </Badge>
-                                    )}
-                                    {isOverride && !m.alwaysOn && (
-                                      <Badge variant="outline" className="text-[9px] bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 border-violet-200 dark:border-violet-800">
-                                        Override
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                                    {m.description}
-                                  </p>
-                                  <Input
-                                    value={edit?.note ?? ""}
-                                    onChange={(e) => setModuleNoteEdit(m.key, e.target.value)}
-                                    placeholder="Optional note (e.g. why granted or revoked)"
-                                    disabled={moduleSaving || m.alwaysOn}
-                                    className="h-7 mt-1.5 text-[11px]"
-                                  />
-                                </div>
-                                <div className="shrink-0 pt-0.5">
-                                  <Switch
-                                    checked={isEnabled}
-                                    onCheckedChange={(v) => toggleModuleEdit(m.key, v)}
-                                    disabled={moduleSaving || m.alwaysOn}
-                                  />
-                                </div>
+      {!loading && config && (
+        <>
+          {/* Summary bar */}
+          <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-xs mb-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Badge variant="outline" className="text-[10px]">
+                {edits.size} total modules
+              </Badge>
+              <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                {enabledCount} enabled
+              </Badge>
+              <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                {disabledCount} disabled
+              </Badge>
+              <span className="text-slate-500 dark:text-slate-400">
+                Plan default: {config.planFeatures.length === 0 ? "all modules" : `${config.planFeatures.length} modules`}
+              </span>
+            </div>
+          </div>
+
+          {/* Module list grouped by group — native scrolling div.
+              Replaced the previous <ScrollArea/> which did not scroll
+              reliably inside the Dialog. The explicit max-h + overflow-y-auto
+              makes the panel scrollable in all browsers. */}
+          <div className="overflow-y-auto max-h-[60vh] pr-1 -mr-1 rounded-lg border border-slate-200 dark:border-slate-800">
+            <div className="space-y-4 p-3">
+              {(["System", "Build", "Discover", "Settings", "Help"] as const).map((groupName) => {
+                const groupModules = config.catalog.filter((m) => m.group === groupName);
+                if (groupModules.length === 0) return null;
+                return (
+                  <div key={groupName} className="space-y-1.5">
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-semibold px-1">
+                      {groupName}
+                    </div>
+                    {groupModules.map((m) => {
+                      const edit = edits.get(m.key);
+                      const isEnabled = edit?.enabled ?? false;
+                      const planFeaturesSet = new Set(
+                        config.planFeatures.length === 0
+                          ? config.catalog.map((mm) => mm.key)
+                          : config.planFeatures,
+                      );
+                      const planDefault = m.alwaysOn ? true : planFeaturesSet.has(m.key);
+                      const isOverride = isEnabled !== planDefault || !!edit?.note;
+                      return (
+                        <div
+                          key={m.key}
+                          className={`rounded-lg border px-3 py-2 transition-colors ${
+                            isEnabled
+                              ? "border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/40 dark:bg-emerald-900/10"
+                              : "border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium truncate">{m.label}</span>
+                                <code className="text-[10px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                  {m.key}
+                                </code>
+                                {m.alwaysOn && (
+                                  <Badge variant="outline" className="text-[9px] bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200 dark:border-amber-800">
+                                    <Lock className="w-2.5 h-2.5 mr-0.5" />Always on
+                                  </Badge>
+                                )}
+                                {isOverride && !m.alwaysOn && (
+                                  <Badge variant="outline" className="text-[9px] bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 border-violet-200 dark:border-violet-800">
+                                    Override
+                                  </Badge>
+                                )}
                               </div>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                {m.description}
+                              </p>
+                              <Input
+                                value={edit?.note ?? ""}
+                                onChange={(e) => onNote(m.key, e.target.value)}
+                                placeholder="Optional note (e.g. why granted or revoked)"
+                                disabled={saving || m.alwaysOn}
+                                className="h-7 mt-1.5 text-[11px]"
+                              />
                             </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
-            </>
-          )}
+                            <div className="shrink-0 pt-0.5">
+                              <Switch
+                                checked={isEnabled}
+                                onCheckedChange={(v) => onToggle(m.key, v)}
+                                disabled={saving || m.alwaysOn}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setModuleOrg(null)} disabled={moduleSaving}>
-              Cancel
-            </Button>
+          {/* Save bar */}
+          <div className="flex items-center justify-end gap-2 mt-3">
+            <span className="text-[11px] text-slate-500 mr-auto">
+              Changes are local until you click Save.
+            </span>
             <Button
-              onClick={saveModuleAccess}
-              disabled={moduleSaving || moduleLoading || !moduleConfig}
-              className="bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white"
+              onClick={onSave}
+              disabled={saving || loading || !config}
+              className="bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white h-8"
+              size="sm"
             >
-              {moduleSaving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
               Save Module Access
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </>
+      )}
     </div>
   );
 }

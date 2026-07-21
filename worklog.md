@@ -137,3 +137,29 @@ Stage Summary:
 - Plan defaults are still respected — overrides are stored only when the super admin's choice differs from the plan.
 - Files changed: prisma/schema.prisma, prisma/schema.postgres.prisma, src/lib/auth.ts, src/app/api/auth/me/route.ts, src/app/page.tsx, src/components/super-admin-panel.tsx, src/app/api/admin/orgs/[id]/modules/route.ts (new).
 - Next: commit + push to GitHub origin/main → Vercel auto-deploys via the existing GitHub integration.
+
+---
+Task ID: 2
+Agent: Super Z (main)
+Task: Replace the Module Access popup Dialog with an inline panel embedded directly inside the Organizations tab, and fix the broken scroll-down.
+
+Work Log:
+- Inspected current `src/components/super-admin-panel.tsx`: module access was rendered as a shadcn Dialog popup with a `<ScrollArea>` for the module list. The ScrollArea was not scrolling reliably inside the Dialog (no explicit height context), so users could not see modules below the fold.
+- Removed the `ScrollArea` import (it was only used inside the popup).
+- Removed the entire `<Dialog open={!!moduleOrg}>…</Dialog>` block at the bottom of the component.
+- Extracted the module access UI into a new `ModuleInlinePanel` sub-component (defined at the bottom of the file, alongside the other small sub-components). It accepts the org, config, loading/saving flags, the edits Map, and onToggle/onNote/onReset/onSave/onClose callbacks. The internal markup is the same as the old dialog body, except:
+  - Replaced `<ScrollArea className="flex-1 -mx-1 px-1">` with a native `<div className="overflow-y-auto max-h-[60vh] pr-1 -mr-1 rounded-lg border …">`. The explicit `max-h-[60vh]` + `overflow-y-auto` makes the panel scroll reliably in all browsers (the previous ScrollArea relied on flex sizing that never resolved inside the Dialog).
+  - Added a header row with the org name + plan, plus inline "Reset to plan" and "Close" buttons (no more Dialog footer).
+  - The Save button is rendered inline at the bottom of the panel with a small "Changes are local until you click Save." hint.
+- Wired the inline panel into the Organizations tab: directly inside each org row container, below the flex row, conditionally rendered when `moduleOrg?.id === o.id`.
+- Changed the "Modules" button so it toggles: clicking it on an org that is already expanded collapses the panel (button label switches between "Modules" and "Hide Modules"). Clicking "Modules" on a different org swaps the expanded panel to that org.
+- Renamed `openModuleDialog` → `openModulePanel` to reflect the new (non-popup) UX. Updated its call site accordingly.
+- Updated the in-component comment from "Module Access dialog" → "Module Access inline panel".
+- Verified: `npx tsc --noEmit` clean; `npx eslint src/components/super-admin-panel.tsx` clean; `npx next build` compiled successfully in 25.4s with no errors.
+
+Stage Summary:
+- The super admin no longer gets a popup when managing module access for a company — the panel expands inline directly under the org row, inside the Organizations tab.
+- The module list now scrolls reliably (native overflow-y-auto with an explicit max-h-[60vh]).
+- Clicking "Modules" again on the same org collapses the panel; clicking on a different org swaps.
+- Files changed: `src/components/super-admin-panel.tsx` only (UI-only change — no schema/API/data-model impact).
+- Next: commit + push to GitHub origin/main → Vercel auto-deploys via the existing GitHub integration.
