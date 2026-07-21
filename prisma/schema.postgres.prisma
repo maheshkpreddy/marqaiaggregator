@@ -44,6 +44,7 @@ model Organization {
   apiKeys         ApiKey[]
   comparisonRuns  ComparisonRun[]
   customApis      CustomApiConfig[]
+  moduleAccess    OrgModuleAccess[]
 }
 
 model User {
@@ -75,6 +76,23 @@ model SubscriptionPlan {
   active          Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+// Per-org module access overrides (see schema.prisma for full docs).
+model OrgModuleAccess {
+  id              String   @id @default(cuid())
+  orgId           String
+  moduleKey       String
+  enabled         Boolean  @default(true)
+  note            String?
+  updatedBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, moduleKey])
+  @@index([orgId])
 }
 
 model Membership {

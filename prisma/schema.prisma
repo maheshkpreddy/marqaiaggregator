@@ -57,6 +57,7 @@ model Organization {
   apiKeys         ApiKey[]
   comparisonRuns  ComparisonRun[]
   customApis      CustomApiConfig[]
+  moduleAccess    OrgModuleAccess[]
 }
 
 model User {
@@ -104,6 +105,45 @@ model SubscriptionPlan {
   active          Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────
+// Per-org module access overrides (super-admin-managed)
+// ─────────────────────────────────────────────────────────────
+// Each row records a super-admin decision for ONE module on ONE org.
+// The effective module set for an org is resolved by:
+//   1. Start with the plan's `features` CSV (empty = all modules enabled).
+//   2. Apply org overrides:
+//        - rows with enabled=true  → force-enable the module
+//        - rows with enabled=false → force-disable the module
+//   3. The result is the set of module keys the org's users can see/use.
+//
+// This lets the super admin grant or revoke individual modules per company
+// without having to create a new subscription plan each time (e.g. give
+// "Acme Corp" access to the Analytics module even though they're on the
+// Free plan, or disable Gemini Chat for a customer who hasn't paid for it).
+model OrgModuleAccess {
+  id              String   @id @default(cuid())
+  orgId           String
+  // Module key — must be one of the keys in MODULE_CATALOG (lib/auth.ts).
+  // Examples: chat, agents, compare, prompts, custom-api, directory,
+  // unified-ai, gemini, guide, providers, health, failovers, analytics,
+  // org, apikeys, docs, chat-history, dashboard.
+  moduleKey       String
+  // true = force-enable, false = force-disable. Overrides the plan default.
+  enabled         Boolean  @default(true)
+  // Free-text note (e.g. "Granted as a favor on 2025-01-15" or
+  // "Disabled due to non-payment of Gemini add-on").
+  note            String?
+  // Who last changed this row (super admin user id).
+  updatedBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, moduleKey])
+  @@index([orgId])
 }
 
 model Membership {

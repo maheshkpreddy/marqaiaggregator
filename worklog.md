@@ -90,3 +90,50 @@ Stage Summary:
 - Post-deploy verification commands the user can run against their Vercel URL:
     curl -X POST https://<vercel-url>/api/auth/login -H "Content-Type: application/json" -d '{"email":"admin@marq.ai","password":"marq-admin-123"}'
   Then hit /api/admin/stats, /api/admin/orgs?status=pending_approval, /api/admin/plans with the session cookie.
+
+---
+Task ID: per-org-module-access-rights
+Agent: main (super-z)
+Task: User reported that the Super Admin module has no module-wise access-rights assignment option per company. Add per-org module-level access control so the super admin can grant or revoke individual modules (Chat, Agents, Compare, Gemini, Analytics, etc.) per company, on top of the plan's default feature set. Push to git + Vercel.
+
+Work Log:
+- Audited existing access model: SubscriptionPlan.features CSV was the only knob — no per-org overrides. The 18 sidebar tabs (chat, agents, compare, prompts, custom-api, directory, unified-ai, gemini, guide, providers, health, failovers, analytics, org, apikeys, docs, chat-history, dashboard) were ALL shown to every approved org regardless of plan.
+- Schema changes (kept SQLite + Postgres in sync):
+  - New model OrgModuleAccess { id, orgId, moduleKey, enabled, note, updatedBy, createdAt, updatedAt }
+  - @@unique([orgId, moduleKey]) — one row per (org, module)
+  - Added `moduleAccess OrgModuleAccess[]` relation on Organization
+- New constants in src/lib/auth.ts:
+  - MODULE_CATALOG: 18 modules with { key, label, group, description, alwaysOn? }
+  - ALWAYS_ON_MODULES: ["dashboard", "docs"] — cannot be revoked
+  - MODULE_KEYS: derived list of all keys
+- New helper `resolveOrgModules(orgId, planCode)`:
+  1. Start with plan.features CSV (empty = all modules)
+  2. Apply OrgModuleAccess rows (enabled=true → add, enabled=false → remove)
+  3. Force-add ALWAYS_ON_MODULES
+  4. Filter against MODULE_CATALOG for legacy data safety
+- Updated getAuthContext() to populate AuthContext.allowedModules (super admins get MODULE_KEYS; org users get resolveOrgModules result).
+- New convenience helper hasModule(ctx, key).
+- New API route /api/admin/orgs/[id]/modules:
+  - GET: returns { catalog, planCode, planName, planFeatures, alwaysOn, overrides, effective }
+  - PUT: body { modules: [{ moduleKey, enabled, note? }] } — atomically replaces all overrides; always-on modules are forced enabled; modules matching plan default have their override dropped (so the table only stores actual overrides).
+  - Both guarded by requireSuperAdmin().
+- Updated /api/auth/me to surface allowedModules at the top level AND inside each membership (so the frontend can re-filter the sidebar when the user switches orgs without an extra round-trip).
+- Frontend src/app/page.tsx:
+  - Added `allowedModules` state + `hasModule(key)` helper.
+  - Wrapped every sidebar NavItem in hasModule(key) check (16 modules gated; dashboard + docs + super-admin always visible).
+  - Added useEffect that bounces the user to /dashboard if their active tab is no longer permitted (e.g. super admin revoked access while they were on it).
+  - Updated handleAuthSuccess, handleLogout, handleSwitchOrg to keep allowedModules in sync.
+- Frontend src/components/super-admin-panel.tsx:
+  - New "Modules" button on every org row (pending + approved + suspended/rejected) — opens the Module Access dialog.
+  - Module Access dialog: shows ALL 18 modules grouped by Build/Discover/Settings/Help/System, each with a Switch + optional note input. Highlights overrides vs plan defaults with colored badges. "Reset to plan" button restores plan defaults. Save commits via PUT /api/admin/orgs/[id]/modules.
+  - Summary bar shows counts (total / enabled / disabled / plan default).
+- Verified build: `npx tsc --noEmit` clean, `npx next build` succeeded with new route /api/admin/orgs/[id]/modules present in build output.
+
+Stage Summary:
+- Per-org module-wise access rights are now fully implemented end-to-end:
+  schema → API → super admin UI → org user sidebar filtering.
+- Super admin can: open any company → toggle any of 18 modules on/off → save → org user's sidebar updates on their next page load.
+- Always-on modules (Dashboard, Docs) cannot be revoked.
+- Plan defaults are still respected — overrides are stored only when the super admin's choice differs from the plan.
+- Files changed: prisma/schema.prisma, prisma/schema.postgres.prisma, src/lib/auth.ts, src/app/api/auth/me/route.ts, src/app/page.tsx, src/components/super-admin-panel.tsx, src/app/api/admin/orgs/[id]/modules/route.ts (new).
+- Next: commit + push to GitHub origin/main → Vercel auto-deploys via the existing GitHub integration.

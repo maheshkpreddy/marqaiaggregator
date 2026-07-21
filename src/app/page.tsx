@@ -114,6 +114,9 @@ interface Membership {
   id: string;
   role: string;
   org: AuthOrg;
+  /** Modules this org is allowed to use (per-org + plan-derived). Missing
+   * on legacy responses — fall back to "all modules" client-side. */
+  allowedModules?: string[];
 }
 
 // ---------- Types ----------
@@ -337,6 +340,9 @@ export default function Home() {
   const [authRole, setAuthRole] = useState<string | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [memberships, setMemberships] = useState<Membership[]>([]);
+  // Modules the active org is allowed to use. For super admins this is null
+  // (= "all modules"). The sidebar nav uses hasModule() to filter tabs.
+  const [allowedModules, setAllowedModules] = useState<string[] | null>(null);
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
@@ -370,6 +376,7 @@ export default function Home() {
           setAuthRole(data.role);
           setIsSuperAdmin(!!data.isSuperAdmin);
           setMemberships(data.memberships ?? []);
+          setAllowedModules(Array.isArray(data.allowedModules) ? data.allowedModules : null);
         } else {
           setAuthUser(null);
         }
@@ -426,11 +433,12 @@ export default function Home() {
     setAuthOrg(data.org);
     setAuthRole("owner");
     setIsSuperAdmin(!!data.isSuperAdmin);
-    // Refresh the me endpoint to get the full memberships list
+    // Refresh the me endpoint to get the full memberships list + allowedModules
     try {
       const res = await fetch("/api/auth/me");
       const d = await res.json();
       if (d.memberships) setMemberships(d.memberships);
+      if (Array.isArray(d.allowedModules)) setAllowedModules(d.allowedModules);
     } catch {}
   }
 
@@ -441,6 +449,7 @@ export default function Home() {
     setAuthRole(null);
     setIsSuperAdmin(false);
     setMemberships([]);
+    setAllowedModules(null);
     setSessions([]);
     setMessages([]);
     setActiveSessionId(null);
@@ -459,6 +468,16 @@ export default function Home() {
       setAuthOrg(d.org);
       const m = memberships.find((mm) => mm.org.id === d.org.id);
       setAuthRole(m?.role ?? "member");
+      // Update allowedModules from the cached membership, OR refetch /me for accuracy.
+      if (m?.allowedModules) {
+        setAllowedModules(m.allowedModules);
+      } else {
+        try {
+          const meRes = await fetch("/api/auth/me");
+          const meData = await meRes.json();
+          if (Array.isArray(meData.allowedModules)) setAllowedModules(meData.allowedModules);
+        } catch {}
+      }
       setOrgMenuOpen(false);
       // Reload org-scoped data
       setSessions([]);
@@ -649,6 +668,19 @@ export default function Home() {
   const degradedCount = providers.filter((p) => p.status === "degraded").length;
   const downCount = providers.filter((p) => p.status === "down").length;
 
+  // If the active tab is no longer permitted for this org (e.g. the super
+  // admin just revoked access while the user was on it), bounce to dashboard.
+  // Must be declared BEFORE any early returns so React's rules-of-hooks hold.
+  useEffect(() => {
+    if (!authUser) return;
+    if (tab === "dashboard" || tab === "super-admin" || tab === "docs") return;
+    // allowedModules null/empty = legacy or super-admin → don't bounce.
+    if (!allowedModules || allowedModules.length === 0) return;
+    if (!allowedModules.includes(tab)) {
+      setTab("dashboard");
+    }
+  }, [allowedModules, tab, authUser]);
+
   // ── Auth gate ──
   // While checking the session, show a minimal loader. If no session, show
   // the AuthScreen (login/signup). Otherwise render the authenticated app.
@@ -700,6 +732,16 @@ export default function Home() {
   const currentMeta = TAB_META[tab];
   const isManager = authRole === "owner" || authRole === "admin";
 
+  // Module access filter: super admins see everything; org users see only
+  // modules in their allowedModules list. If allowedModules is null/undefined
+  // (e.g. legacy /api/auth/me response), default to "all modules" so the UI
+  // doesn't break for users still on the old backend.
+  const hasModule = (key: string): boolean => {
+    if (isSuperAdmin) return true;
+    if (!allowedModules || allowedModules.length === 0) return true;
+    return allowedModules.includes(key);
+  };
+
   // Sidebar content — rendered both in the desktop sidebar and the mobile drawer.
   const sidebarNav = (
     <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
@@ -718,34 +760,58 @@ export default function Home() {
       )}
 
       <NavGroup label="Build">
-        <NavItem icon={MessageSquare} label="Chat" active={tab === "chat"} onClick={() => { setTab("chat"); setMobileNavOpen(false); }} />
-        {authRole === "owner" && (
+        {hasModule("chat") && (
+          <NavItem icon={MessageSquare} label="Chat" active={tab === "chat"} onClick={() => { setTab("chat"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("chat-history") && authRole === "owner" && (
           <NavItem icon={History} label="Chat History" active={tab === "chat-history"} onClick={() => { setTab("chat-history"); setMobileNavOpen(false); }} />
         )}
-        <NavItem icon={Brain} label="Agents" active={tab === "agent"} onClick={() => { setTab("agent"); setMobileNavOpen(false); }} />
-        <NavItem icon={GitCompare} label="Compare" active={tab === "compare"} onClick={() => { setTab("compare"); setMobileNavOpen(false); }} />
-        <NavItem icon={BookMarked} label="Prompts" active={tab === "prompts"} onClick={() => { setTab("prompts"); setMobileNavOpen(false); }} />
-        {isManager && (
+        {hasModule("agents") && (
+          <NavItem icon={Brain} label="Agents" active={tab === "agent"} onClick={() => { setTab("agent"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("compare") && (
+          <NavItem icon={GitCompare} label="Compare" active={tab === "compare"} onClick={() => { setTab("compare"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("prompts") && (
+          <NavItem icon={BookMarked} label="Prompts" active={tab === "prompts"} onClick={() => { setTab("prompts"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("custom-api") && isManager && (
           <NavItem icon={Wand2} label="Custom API Builder" active={tab === "custom-api"} onClick={() => { setTab("custom-api"); setMobileNavOpen(false); }} />
         )}
       </NavGroup>
 
       <NavGroup label="Discover">
-        <NavItem icon={Network} label="AI Directory" active={tab === "directory"} onClick={() => { setTab("directory"); setMobileNavOpen(false); }} />
-        <NavItem icon={ServerCog} label="Unified AI" active={tab === "unified-ai"} onClick={() => { setTab("unified-ai"); setMobileNavOpen(false); }} />
-        <NavItem icon={Sparkles} label="Gemini Chat" active={tab === "gemini"} onClick={() => { setTab("gemini"); setMobileNavOpen(false); }} />
-        <NavItem icon={BookOpen} label="Guide" active={tab === "guide"} onClick={() => { setTab("guide"); setMobileNavOpen(false); }} />
+        {hasModule("directory") && (
+          <NavItem icon={Network} label="AI Directory" active={tab === "directory"} onClick={() => { setTab("directory"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("unified-ai") && (
+          <NavItem icon={ServerCog} label="Unified AI" active={tab === "unified-ai"} onClick={() => { setTab("unified-ai"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("gemini") && (
+          <NavItem icon={Sparkles} label="Gemini Chat" active={tab === "gemini"} onClick={() => { setTab("gemini"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("guide") && (
+          <NavItem icon={BookOpen} label="Guide" active={tab === "guide"} onClick={() => { setTab("guide"); setMobileNavOpen(false); }} />
+        )}
       </NavGroup>
 
       <NavGroup label="Settings">
-        <NavItem icon={Settings2} label="AI Providers" active={tab === "providers"} onClick={() => { setTab("providers"); setMobileNavOpen(false); }} />
-        <NavItem icon={Activity} label="Health" active={tab === "health"} onClick={() => { setTab("health"); setMobileNavOpen(false); }} />
-        <NavItem icon={Shield} label="Failovers" active={tab === "failovers"} onClick={() => { setTab("failovers"); setMobileNavOpen(false); }} />
-        <NavItem icon={BarChart3} label="Analytics" active={tab === "analytics"} onClick={() => { setTab("analytics"); setMobileNavOpen(false); }} />
-        {authRole !== "viewer" && (
+        {hasModule("providers") && (
+          <NavItem icon={Settings2} label="AI Providers" active={tab === "providers"} onClick={() => { setTab("providers"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("health") && (
+          <NavItem icon={Activity} label="Health" active={tab === "health"} onClick={() => { setTab("health"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("failovers") && (
+          <NavItem icon={Shield} label="Failovers" active={tab === "failovers"} onClick={() => { setTab("failovers"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("analytics") && (
+          <NavItem icon={BarChart3} label="Analytics" active={tab === "analytics"} onClick={() => { setTab("analytics"); setMobileNavOpen(false); }} />
+        )}
+        {hasModule("org") && authRole !== "viewer" && (
           <NavItem icon={Users} label="Team" active={tab === "org"} onClick={() => { setTab("org"); setMobileNavOpen(false); }} />
         )}
-        {isManager && (
+        {hasModule("apikeys") && isManager && (
           <NavItem icon={Key} label="API Keys" active={tab === "apikeys"} onClick={() => { setTab("apikeys"); setMobileNavOpen(false); }} />
         )}
       </NavGroup>

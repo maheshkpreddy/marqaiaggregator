@@ -8,6 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Switch } from "@/components/ui/switch";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -29,6 +31,7 @@ import {
   Shield, CheckCircle2, XCircle, Pause, Play, Loader2, Search, Building2,
   Users, Crown, Key, Activity, TrendingUp, AlertTriangle, Clock, Mail,
   Sparkles, RefreshCw, UserCheck, UserX, CreditCard, Settings2, Lock,
+  Boxes, LayoutGrid, Save, RotateCcw,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -77,6 +80,31 @@ interface PlanRow {
   publicVisible: boolean;
   sortOrder: number;
   active: boolean;
+}
+
+// ── Module Access types (per-org module overrides) ──────────────
+interface ModuleDef {
+  key: string;
+  label: string;
+  group: "Build" | "Discover" | "Settings" | "Help" | "System";
+  description: string;
+  alwaysOn?: boolean;
+}
+
+interface ModuleOverride {
+  moduleKey: string;
+  enabled: boolean;
+  note: string | null;
+}
+
+interface ModuleAccessConfig {
+  catalog: ModuleDef[];
+  planCode: string;
+  planName: string;
+  planFeatures: string[];
+  alwaysOn: string[];
+  overrides: ModuleOverride[];
+  effective: string[];
 }
 
 interface Stats {
@@ -143,6 +171,16 @@ export function SuperAdminPanel() {
   const [reviewSeats, setReviewSeats] = useState(5);
   const [reviewNote, setReviewNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
+
+  // Module Access dialog: opened when the admin clicks "Modules" on any org.
+  // Lets the super admin grant or revoke individual modules per company,
+  // overriding the plan's default feature set.
+  const [moduleOrg, setModuleOrg] = useState<OrgRow | null>(null);
+  const [moduleConfig, setModuleConfig] = useState<ModuleAccessConfig | null>(null);
+  const [moduleLoading, setModuleLoading] = useState(false);
+  const [moduleSaving, setModuleSaving] = useState(false);
+  // Local edits: Map<moduleKey, { enabled, note }> — committed on Save.
+  const [moduleEdits, setModuleEdits] = useState<Map<string, { enabled: boolean; note: string }>>(new Map());
 
   const { toast } = useToast();
 
@@ -282,6 +320,116 @@ export function SuperAdminPanel() {
     if (ok) {
       setReviewOrg(null);
       setRejectReason("");
+    }
+  }
+
+  // ── Module Access dialog ────────────────────────────────────────
+  // Loads the per-org module config (catalog + plan features + overrides +
+  // effective set) and seeds the local edits map with the current state.
+
+  async function openModuleDialog(org: OrgRow) {
+    setModuleOrg(org);
+    setModuleConfig(null);
+    setModuleEdits(new Map());
+    setModuleLoading(true);
+    try {
+      const r = await fetch(`/api/admin/orgs/${org.id}/modules`);
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.error || "Failed to load module config");
+      }
+      const cfg: ModuleAccessConfig = await r.json();
+      setModuleConfig(cfg);
+      // Seed local edits with current override state.
+      const seed = new Map<string, { enabled: boolean; note: string }>();
+      const planFeaturesSet = new Set(cfg.planFeatures.length === 0 ? cfg.catalog.map((m) => m.key) : cfg.planFeatures);
+      for (const m of cfg.catalog) {
+        const override = cfg.overrides.find((o) => o.moduleKey === m.key);
+        const enabled = m.alwaysOn ? true : (override ? override.enabled : planFeaturesSet.has(m.key));
+        const note = override?.note ?? "";
+        seed.set(m.key, { enabled, note });
+      }
+      setModuleEdits(seed);
+    } catch (err) {
+      toast({
+        title: "Could not load module config",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+      setModuleOrg(null);
+    } finally {
+      setModuleLoading(false);
+    }
+  }
+
+  function toggleModuleEdit(key: string, enabled: boolean) {
+    setModuleEdits((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(key) ?? { enabled: false, note: "" };
+      next.set(key, { ...cur, enabled });
+      return next;
+    });
+  }
+
+  function setModuleNoteEdit(key: string, note: string) {
+    setModuleEdits((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(key) ?? { enabled: false, note: "" };
+      next.set(key, { ...cur, note });
+      return next;
+    });
+  }
+
+  // Reset all toggles back to the plan default (clears all overrides).
+  function resetModuleEditsToPlanDefault() {
+    if (!moduleConfig) return;
+    const seed = new Map<string, { enabled: boolean; note: string }>();
+    const planFeaturesSet = new Set(
+      moduleConfig.planFeatures.length === 0
+        ? moduleConfig.catalog.map((m) => m.key)
+        : moduleConfig.planFeatures,
+    );
+    for (const m of moduleConfig.catalog) {
+      const enabled = m.alwaysOn ? true : planFeaturesSet.has(m.key);
+      seed.set(m.key, { enabled, note: "" });
+    }
+    setModuleEdits(seed);
+    toast({ title: "Reset to plan defaults", description: "Click Save to commit." });
+  }
+
+  async function saveModuleAccess() {
+    if (!moduleOrg || !moduleConfig) return;
+    setModuleSaving(true);
+    try {
+      const modules = Array.from(moduleEdits.entries()).map(([moduleKey, v]) => ({
+        moduleKey,
+        enabled: v.enabled,
+        note: v.note.trim() || undefined,
+      }));
+      const r = await fetch(`/api/admin/orgs/${moduleOrg.id}/modules`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modules }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Save failed");
+      toast({
+        title: "Module access updated",
+        description: `${moduleOrg.name} — ${d.effective?.length ?? 0} modules enabled.`,
+      });
+      setModuleOrg(null);
+      setModuleConfig(null);
+      setModuleEdits(new Map());
+      // Refresh orgs so any badge hint can update.
+      await loadOrgs();
+    } catch (err) {
+      toast({
+        title: "Could not save module access",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setModuleSaving(false);
     }
   }
 
@@ -584,6 +732,15 @@ export function SuperAdminPanel() {
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
+                            <Button
+                              size="sm" variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => openModuleDialog(o)}
+                              disabled={actionLoading === o.id}
+                              title="Configure which modules this company can access"
+                            >
+                              <LayoutGrid className="w-3 h-3 mr-1" />Modules
+                            </Button>
                             {o.status === "pending_approval" && (
                               <Button
                                 size="sm" variant="outline"
@@ -955,6 +1112,149 @@ export function SuperAdminPanel() {
             >
               {actionLoading === reviewOrg?.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
               Approve & Assign Plan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Module Access dialog ── */}
+      <Dialog open={!!moduleOrg} onOpenChange={(o) => !o && setModuleOrg(null)}>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LayoutGrid className="w-4 h-4 text-violet-500" />
+              Module Access — {moduleOrg?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Grant or revoke individual modules for this company. Overrides the plan's default feature set.
+              {" "}Current plan: <strong>{moduleConfig?.planName ?? moduleOrg?.plan}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          {moduleLoading && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+            </div>
+          )}
+
+          {!moduleLoading && moduleConfig && (
+            <>
+              {/* Summary bar */}
+              <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-xs">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Badge variant="outline" className="text-[10px]">
+                    {moduleEdits.size} total modules
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                    {Array.from(moduleEdits.values()).filter((v) => v.enabled).length} enabled
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                    {Array.from(moduleEdits.values()).filter((v) => !v.enabled).length} disabled
+                  </Badge>
+                  <span className="text-slate-500 dark:text-slate-400">
+                    Plan default: {moduleConfig.planFeatures.length === 0 ? "all modules" : `${moduleConfig.planFeatures.length} modules`}
+                  </span>
+                </div>
+                <Button
+                  size="sm" variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={resetModuleEditsToPlanDefault}
+                  disabled={moduleSaving}
+                  title="Reset all toggles to the plan's default feature set"
+                >
+                  <RotateCcw className="w-3 h-3 mr-1" />Reset to plan
+                </Button>
+              </div>
+
+              {/* Module list grouped by group */}
+              <ScrollArea className="flex-1 -mx-1 px-1">
+                <div className="space-y-4 py-1">
+                  {(["System", "Build", "Discover", "Settings", "Help"] as const).map((groupName) => {
+                    const groupModules = moduleConfig.catalog.filter((m) => m.group === groupName);
+                    if (groupModules.length === 0) return null;
+                    return (
+                      <div key={groupName} className="space-y-1.5">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-semibold px-1">
+                          {groupName}
+                        </div>
+                        {groupModules.map((m) => {
+                          const edit = moduleEdits.get(m.key);
+                          const isEnabled = edit?.enabled ?? false;
+                          const planFeaturesSet = new Set(
+                            moduleConfig.planFeatures.length === 0
+                              ? moduleConfig.catalog.map((mm) => mm.key)
+                              : moduleConfig.planFeatures,
+                          );
+                          const planDefault = m.alwaysOn ? true : planFeaturesSet.has(m.key);
+                          const isOverride = isEnabled !== planDefault || !!edit?.note;
+                          return (
+                            <div
+                              key={m.key}
+                              className={`rounded-lg border px-3 py-2 transition-colors ${
+                                isEnabled
+                                  ? "border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/40 dark:bg-emerald-900/10"
+                                  : "border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20"
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-sm font-medium truncate">{m.label}</span>
+                                    <code className="text-[10px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                      {m.key}
+                                    </code>
+                                    {m.alwaysOn && (
+                                      <Badge variant="outline" className="text-[9px] bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200 dark:border-amber-800">
+                                        <Lock className="w-2.5 h-2.5 mr-0.5" />Always on
+                                      </Badge>
+                                    )}
+                                    {isOverride && !m.alwaysOn && (
+                                      <Badge variant="outline" className="text-[9px] bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 border-violet-200 dark:border-violet-800">
+                                        Override
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                    {m.description}
+                                  </p>
+                                  <Input
+                                    value={edit?.note ?? ""}
+                                    onChange={(e) => setModuleNoteEdit(m.key, e.target.value)}
+                                    placeholder="Optional note (e.g. why granted or revoked)"
+                                    disabled={moduleSaving || m.alwaysOn}
+                                    className="h-7 mt-1.5 text-[11px]"
+                                  />
+                                </div>
+                                <div className="shrink-0 pt-0.5">
+                                  <Switch
+                                    checked={isEnabled}
+                                    onCheckedChange={(v) => toggleModuleEdit(m.key, v)}
+                                    disabled={moduleSaving || m.alwaysOn}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            </>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setModuleOrg(null)} disabled={moduleSaving}>
+              Cancel
+            </Button>
+            <Button
+              onClick={saveModuleAccess}
+              disabled={moduleSaving || moduleLoading || !moduleConfig}
+              className="bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white"
+            >
+              {moduleSaving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              Save Module Access
             </Button>
           </DialogFooter>
         </DialogContent>

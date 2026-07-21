@@ -29,6 +29,51 @@ export type Role = "owner" | "admin" | "member" | "viewer";
 export type GlobalRole = "user" | "super_admin";
 export type Scope = "chat" | "compare" | "agents" | "read" | "admin" | "custom";
 
+// ── Module catalog (per-org access control) ───────────────────
+//
+// The canonical list of "modules" the super admin can grant or revoke per
+// company. Each entry maps a moduleKey (stored in OrgModuleAccess) to a
+// human-readable label + the sidebar group it belongs to. The frontend uses
+// this catalog to render the Module Access dialog in the Super Admin console
+// and to filter the sidebar nav for org users.
+//
+// IMPORTANT: when you add a new top-level tab in page.tsx, add its key here
+// too so the super admin can grant/revoke access to it per company.
+
+export interface ModuleDef {
+  key: string;
+  label: string;
+  group: "Build" | "Discover" | "Settings" | "Help" | "System";
+  description: string;
+  /** Modules that are ALWAYS enabled (cannot be revoked). These are
+   * infrastructure modules every org needs to function. */
+  alwaysOn?: boolean;
+}
+
+export const MODULE_CATALOG: ModuleDef[] = [
+  { key: "dashboard",     label: "Dashboard",         group: "System",   description: "Landing page with usage stats and quick links.", alwaysOn: true },
+  { key: "chat",          label: "Chat",              group: "Build",    description: "Direct LLM chat with provider failover." },
+  { key: "chat-history",  label: "Chat History",      group: "Build",    description: "Browse and resume past chat sessions." },
+  { key: "agents",        label: "Agents",            group: "Build",    description: "ReAct agent tasks with multi-step reasoning." },
+  { key: "compare",       label: "Compare",           group: "Build",    description: "Side-by-side comparison of provider responses." },
+  { key: "prompts",       label: "Prompts",           group: "Build",    description: "Reusable prompt library." },
+  { key: "custom-api",    label: "Custom API Builder",group: "Build",    description: "AI-powered custom API key with curated provider chains." },
+  { key: "directory",     label: "AI Directory",      group: "Discover", description: "Catalog of all available AI providers." },
+  { key: "unified-ai",    label: "Unified AI",        group: "Discover", description: "Unified AI panel with multi-provider routing." },
+  { key: "gemini",        label: "Gemini Chat",       group: "Discover", description: "Google Gemini chat interface." },
+  { key: "guide",         label: "Provider Guide",    group: "Discover", description: "Setup guide for each AI provider." },
+  { key: "providers",     label: "AI Providers",      group: "Settings", description: "Configure provider API keys and endpoints." },
+  { key: "health",        label: "Health",            group: "Settings", description: "Live health check of all providers." },
+  { key: "failovers",     label: "Failovers",         group: "Settings", description: "Failover log and circuit breaker status." },
+  { key: "analytics",     label: "Analytics",         group: "Settings", description: "Usage analytics and insights dashboard." },
+  { key: "org",           label: "Team",              group: "Settings", description: "Manage org members and roles." },
+  { key: "apikeys",       label: "API Keys",          group: "Settings", description: "Manage unified API keys for external integrations." },
+  { key: "docs",          label: "Docs",              group: "Help",     description: "In-app documentation.", alwaysOn: true },
+];
+
+export const MODULE_KEYS: string[] = MODULE_CATALOG.map((m) => m.key);
+export const ALWAYS_ON_MODULES: string[] = MODULE_CATALOG.filter((m) => m.alwaysOn).map((m) => m.key);
+
 export interface AuthContext {
   user: {
     id: string;
@@ -47,6 +92,61 @@ export interface AuthContext {
   membershipId: string;
   /** True when user.globalRole === "super_admin". Bypasses org RBAC. */
   isSuperAdmin: boolean;
+  /**
+   * Set of module keys this org is allowed to use (after merging the plan's
+   * feature list with the per-org overrides in OrgModuleAccess). For super
+   * admins, this is MODULE_KEYS (all modules). Frontend code should consult
+   * this set to decide which sidebar tabs to show.
+   */
+  allowedModules: string[];
+}
+
+// ── Module resolution (plan features + per-org overrides) ──────
+//
+// The effective module set for an org is:
+//   1. Start with the plan's `features` CSV. Empty string = ALL modules.
+//   2. Apply OrgModuleAccess rows:
+//        - enabled=true  → force-add to the set (overrides plan)
+//        - enabled=false → force-remove from the set (overrides plan)
+//   3. Always-on modules (dashboard, docs) are added back unconditionally.
+//
+// This is evaluated server-side on every authenticated request via
+// getAuthContext(), so module-access changes by the super admin take effect
+// on the org user's very next page load (no cache to bust).
+
+export async function resolveOrgModules(orgId: string, planCode: string): Promise<string[]> {
+  // 1. Pull the plan's feature CSV.
+  const plan = await db.subscriptionPlan.findUnique({ where: { code: planCode } });
+  const planFeatures = plan?.features ?? "";
+  const planModuleSet: Set<string> = new Set(
+    planFeatures
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  // Empty plan features = ALL modules enabled (e.g. Enterprise / Custom).
+  const baseline = planModuleSet.size === 0 ? new Set(MODULE_KEYS) : planModuleSet;
+
+  // 2. Pull per-org overrides.
+  const overrides = await db.orgModuleAccess.findMany({ where: { orgId } });
+  for (const o of overrides) {
+    if (o.enabled) baseline.add(o.moduleKey);
+    else baseline.delete(o.moduleKey);
+  }
+
+  // 3. Always-on modules (dashboard, docs) — always present.
+  for (const k of ALWAYS_ON_MODULES) baseline.add(k);
+
+  // 4. Filter out any keys not in MODULE_CATALOG (legacy data safety).
+  const catalog = new Set(MODULE_KEYS);
+  return Array.from(baseline).filter((k) => catalog.has(k)).sort();
+}
+
+/** Convenience: is the given module enabled for this auth context? */
+export function hasModule(ctx: AuthContext | null, moduleKey: string): boolean {
+  if (!ctx) return false;
+  if (ctx.isSuperAdmin) return true;
+  return ctx.allowedModules.includes(moduleKey);
 }
 
 // ── Password hashing (scrypt) ─────────────────────────────────
@@ -179,10 +279,16 @@ export async function getAuthContext(): Promise<AuthContext | null> {
         role: "owner",
         membershipId: "",
         isSuperAdmin: true,
+        allowedModules: MODULE_KEYS, // super admin sees everything
       };
     }
     return null; // user has no orgs
   }
+
+  // Resolve the effective module set for this org (plan features + overrides).
+  const allowedModules = isSuperAdmin
+    ? MODULE_KEYS
+    : await resolveOrgModules(membership.org.id, membership.org.plan);
 
   return {
     user: {
@@ -201,6 +307,7 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     role: isSuperAdmin ? "owner" : (membership.role as Role),
     membershipId: membership.id,
     isSuperAdmin,
+    allowedModules,
   };
 }
 
